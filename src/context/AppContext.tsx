@@ -392,63 +392,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       refreshConversations();
     });
 
-    signalR.on('IncomingCall', (callData: any) => {
-      setIncomingCall(callData);
-    });
-
-    signalR.on('CallCancelled', ({ callId, roomId }: any) => {
-      sound.stopAllRings();
-      const currentIn = incomingCallRef.current;
-      if (currentIn && (!callId || currentIn.callId === callId || currentIn.roomId === roomId)) {
-        setIncomingCall(null);
-        addToast('Llamada cancelada', 'info');
-      }
-    });
-
-    signalR.on('CallResponse', (respData: any) => {
-      sound.stopAllRings();
-      if (!respData.accepted) {
-        sound.playHangupTone();
-        setOutgoingCall(null);
-        addToast(`Llamada rechazada por ${respData.callee?.displayName || 'el usuario'}`, 'info');
-      } else {
-        const out = outgoingCallRef.current;
-        setOutgoingCall(null);
-        const targetRoom = respData.roomId || out?.roomId;
-        if (targetRoom) {
-          window.dispatchEvent(new CustomEvent('collabpulse:join-call', {
-            detail: {
-              roomId: targetRoom,
-              title: out?.targetName || `Llamada con ${respData.callee?.displayName || 'Colaborador'}`,
-              callType: out?.isVideo ? 'video' : 'audio',
-              conversationId: out?.conversationId,
-              channelId: out?.channelId,
-              targetUserId: out?.targetUserId || respData.callee?.id,
-              isInitiator: true
-            }
-          }));
-        }
-      }
-    });
-
-
-    signalR.on('CallEnded', ({ roomId }: any) => {
-      sound.stopAllRings();
-      sound.playHangupTone();
-      const actMeet = activeMeetingRef.current;
-      if (actMeet && (actMeet.id === roomId || actMeet.meetingCode === roomId)) {
-        addToast('La llamada ha finalizado', 'info');
-        setActiveMeeting(null);
-        setActiveView(currentConversationRef.current ? 'conversation' : 'channel');
-      }
-      if (outgoingCallRef.current && outgoingCallRef.current.roomId === roomId) {
-        setOutgoingCall(null);
-      }
-      if (incomingCallRef.current && incomingCallRef.current.roomId === roomId) {
-        setIncomingCall(null);
-      }
-    });
-
     signalR.on('NotificationCreated', (notif: Notification) => {
       setNotifications(prev => [notif, ...prev]);
     });
@@ -480,10 +423,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
 
+    const handleGlobalCallEnded = () => {
+      sound.stopAllRings();
+      setActiveMeeting(null);
+      setOutgoingCall(null);
+      setIncomingCall(null);
+      setActiveView(prev => (prev === 'meeting' ? 'calls' : prev));
+    };
+    window.addEventListener('collabpulse:call-ended', handleGlobalCallEnded);
+
     signalR.on('MessageCreated', handleGlobalMessage);
     signalR.on('MessageReceived', handleGlobalMessage);
 
     return () => {
+      window.removeEventListener('collabpulse:call-ended', handleGlobalCallEnded);
       signalR.off('MessageCreated', handleGlobalMessage);
       signalR.off('MessageReceived', handleGlobalMessage);
       signalR.off('IncomingCall');
@@ -585,38 +538,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isVideo: boolean;
     title: string;
   }) => {
-    const roomId = 'room-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-    const callId = 'call-' + Date.now();
-
-    sound.playOutgoingRing();
-
-    const callPayload = {
-      callId,
-      roomId,
-      targetUserId: options.targetUserId,
-      conversationId: options.conversationId,
-      channelId: options.channelId,
-      isVideo: options.isVideo,
-      targetName: options.title,
-      callType: options.isVideo ? 'video' : 'audio'
-    };
-
-    setOutgoingCall(callPayload);
-
-    try {
-      await api.inviteCall({
+    window.dispatchEvent(new CustomEvent('collabpulse:start-call', {
+      detail: {
         targetUserId: options.targetUserId,
         conversationId: options.conversationId,
         channelId: options.channelId,
-        roomId,
-        isVideo: options.isVideo,
+        callType: options.isVideo ? 'video' : 'audio',
         title: options.title
-      });
-    } catch (err: any) {
-      sound.stopAllRings();
-      setOutgoingCall(null);
-      addToast('No se pudo iniciar la llamada: ' + (err.message || 'Error'), 'error');
-    }
+      }
+    }));
   };
 
   const cancelOutgoingCall = async () => {

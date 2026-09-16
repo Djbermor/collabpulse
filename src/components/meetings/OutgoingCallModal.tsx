@@ -1,9 +1,9 @@
 import React from 'react';
 import { Phone, PhoneOff, Video } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import { useCall } from '../../context/CallContext';
 
 export const OutgoingCallModal: React.FC = () => {
-  const { outgoingCall, cancelOutgoingCall } = useApp();
+  const { outgoingCall, cancelOutgoingCall } = useCall();
 
   if (!outgoingCall) return null;
 

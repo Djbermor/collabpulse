@@ -460,6 +460,75 @@ export interface Meeting {
   createdAt: string;
 }
 
+// --- CALL ENGINE CORE (FASE 1) ---
+export type CallState =
+  | 'idle'
+  | 'initiating'
+  | 'ringing_outgoing'
+  | 'ringing_incoming'
+  | 'connecting'
+  | 'active'
+  | 'held'
+  | 'reconnecting'
+  | 'ended'
+  | 'failed';
+
+export type CallDirection = 'inbound' | 'outbound';
+export type CallMediaType = 'audio' | 'video';
+export type CallOrigin = 'direct' | 'conversation' | 'channel' | 'meeting';
+
+export interface CallSession {
+  id: string;
+  roomId: string;
+  tenantId: string;
+  workspaceId: string;
+  type: '1:1' | 'group';
+  mediaType: CallMediaType;
+  direction: CallDirection;
+  origin: CallOrigin;
+  state: CallState;
+  callerId: string;
+  calleeId?: string;
+  callerName?: string;
+  calleeName?: string;
+  callerAvatar?: string;
+  calleeAvatar?: string;
+  conversationId?: string;
+  channelId?: string;
+  participantIds: string[];
+  createdAt: string;
+  startedAt?: string;
+  ringingAt?: string;
+  connectedAt?: string;
+  endedAt?: string;
+  endReason?: string;
+  durationSeconds?: number;
+}
+
+export interface CallParticipant {
+  id: string;
+  callId: string;
+  userId: string;
+  userName?: string;
+  userAvatar?: string;
+  role: 'caller' | 'callee' | 'participant' | 'host';
+  state: 'invited' | 'ringing' | 'connected' | 'held' | 'left' | 'declined' | 'missed';
+  joinedAt?: string;
+  leftAt?: string;
+  createdAt: string;
+}
+
+export interface CallHistoryRecord {
+  id: string;
+  callId: string;
+  tenantId?: string;
+  eventType: 'outgoing' | 'incoming' | 'accepted' | 'declined' | 'missed' | 'cancelled' | 'connected' | 'held' | 'resumed' | 'reconnecting' | 'completed' | 'failed' | 'timeout';
+  userId?: string;
+  metadata?: any;
+  createdAt: string;
+}
+
+
 export type NotificationType =
   | 'Mention'
   | 'DirectMessage'

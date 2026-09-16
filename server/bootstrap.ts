@@ -140,8 +140,58 @@ export async function bootstrapDatabase() {
           content TEXT NOT NULL,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
         );
+
+        -- FASE 1: CALL ENGINE CORE TABLES
+        CREATE TABLE IF NOT EXISTS calls (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          room_id TEXT NOT NULL,
+          origin TEXT NOT NULL DEFAULT 'direct',
+          type TEXT NOT NULL DEFAULT '1:1',
+          media_type TEXT NOT NULL DEFAULT 'video',
+          direction TEXT NOT NULL DEFAULT 'outbound',
+          caller_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          callee_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          conversation_id TEXT,
+          channel_id TEXT,
+          status TEXT NOT NULL DEFAULT 'initiating',
+          started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          connected_at TIMESTAMP WITH TIME ZONE,
+          ended_at TIMESTAMP WITH TIME ZONE,
+          duration_seconds INTEGER DEFAULT 0,
+          end_reason TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS call_participants (
+          id TEXT PRIMARY KEY,
+          call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          role TEXT NOT NULL DEFAULT 'caller',
+          state TEXT NOT NULL DEFAULT 'invited',
+          joined_at TIMESTAMP WITH TIME ZONE,
+          left_at TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS call_history (
+          id TEXT PRIMARY KEY,
+          call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+          event_type TEXT NOT NULL,
+          user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          metadata TEXT DEFAULT '{}',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_calls_tenant_id ON calls(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_calls_caller_id ON calls(caller_id);
+        CREATE INDEX IF NOT EXISTS idx_calls_callee_id ON calls(callee_id);
+        CREATE INDEX IF NOT EXISTS idx_calls_room_id ON calls(room_id);
+        CREATE INDEX IF NOT EXISTS idx_call_participants_call_id ON call_participants(call_id);
+        CREATE INDEX IF NOT EXISTS idx_call_history_call_id ON call_history(call_id);
       `);
-      console.log('[Bootstrap] Organizations, notifications, and task_comments tables verified in PostgreSQL.');
+      console.log('[Bootstrap] Organizations, notifications, task_comments, and call engine tables verified in PostgreSQL.');
     } catch (err: any) {
       console.error('[Bootstrap] Error creating extended DDL tables:', err.message);
     }

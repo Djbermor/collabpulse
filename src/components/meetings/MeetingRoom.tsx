@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Mic,
   MicOff,
@@ -11,11 +11,12 @@ import {
   Copy,
   Check,
   Send,
-  UserPlus,
-  Volume2
+  UserPlus
 } from 'lucide-react';
 import { useCall, PeerState } from '../../context/CallContext';
 import { useApp } from '../../context/AppContext';
+import { api } from '../../services/api';
+import { VideoTile } from './VideoTile';
 
 export const MeetingRoom: React.FC = () => {
   const {
@@ -39,13 +40,31 @@ export const MeetingRoom: React.FC = () => {
     toggleScreenShare,
     setShowInCallChat,
     setShowAddParticipant,
-    sendInCallMessage
+    sendInCallMessage,
+    escalateToGroup
   } = useCall();
 
-  const { currentUser } = useApp();
+  const { currentUser, setActiveMeeting, setActiveView } = useApp();
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [newChatText, setNewChatText] = useState('');
+  const [workspaceUsers, setWorkspaceUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
+
+  // Fetch users for participant invitation
+  useEffect(() => {
+    if (showAddParticipant) {
+      setLoadingUsers(true);
+      api.getWorkspaceUsers()
+        .then(res => {
+          if (res.success && res.data) {
+            setWorkspaceUsers(res.data.filter((u: any) => u.id !== currentUser?.id));
+          }
+        })
+        .finally(() => setLoadingUsers(false));
+    }
+  }, [showAddParticipant, currentUser?.id]);
 
   const handleCopyLink = () => {
     if (roomId) {
@@ -60,6 +79,12 @@ export const MeetingRoom: React.FC = () => {
     if (!newChatText.trim()) return;
     sendInCallMessage(newChatText);
     setNewChatText('');
+  };
+
+  const handleEndCall = async () => {
+    await endCall();
+    setActiveMeeting(null);
+    setActiveView('calls');
   };
 
   const totalParticipants = 1 + peers.length;
@@ -97,88 +122,35 @@ export const MeetingRoom: React.FC = () => {
       </div>
 
       {/* Main Video Stage */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         <div className={`flex-1 p-4 grid ${gridColsClass} gap-4 overflow-y-auto items-center justify-center`}>
           {/* Local User Video Tile */}
-          <div
-            className={`relative aspect-video rounded-2xl bg-slate-900 border overflow-hidden shadow-2xl flex items-center justify-center group ${
-              activeSpeakerId === 'local' || activeSpeakerId === currentUser?.id
-                ? 'border-emerald-500 ring-2 ring-emerald-500/50'
-                : 'border-slate-800 ring-1 ring-indigo-500/30'
-            }`}
-          >
-            {isVideoOff && !isScreenSharing ? (
-              <div className="flex flex-col items-center gap-2 select-none">
-                <img
-                  src={currentUser?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
-                  alt="Tú"
-                  className="w-16 h-16 rounded-full object-cover ring-2 ring-indigo-500"
-                />
-                <span className="text-slate-300 font-semibold text-sm">{currentUser?.firstName} (Tú)</span>
-              </div>
-            ) : (
-              <video
-                ref={el => {
-                  if (el) {
-                    el.srcObject = isScreenSharing ? screenStream : localStream;
-                  }
-                }}
-                autoPlay
-                playsInline
-                muted
-                className={`w-full h-full object-cover ${!isScreenSharing ? 'transform scale-x-[-1]' : ''}`}
-              />
-            )}
-
-            <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-xs px-2.5 py-1 rounded-lg flex items-center gap-2 text-white text-xs">
-              <span className="font-medium">{currentUser?.firstName || 'Tú'} (Tú)</span>
-              {isAudioMuted && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
-              {isScreenSharing && <Monitor className="w-3.5 h-3.5 text-cyan-400" />}
-            </div>
+          <div className="relative aspect-video rounded-2xl overflow-hidden shadow-2xl">
+            <VideoTile
+              stream={isScreenSharing ? screenStream : localStream}
+              name={currentUser?.firstName || 'Tú'}
+              avatarUrl={currentUser?.avatarUrl}
+              isLocal={true}
+              isAudioMuted={isAudioMuted}
+              isVideoOff={isVideoOff}
+              isSpeaking={activeSpeakerId === 'local' || activeSpeakerId === currentUser?.id}
+              isScreenShare={isScreenSharing}
+            />
           </div>
 
-          {/* Remote Peers */}
+          {/* Remote Peers with persistent dedicated <audio> and <video> via VideoTile */}
           {peers.map((peer: PeerState) => (
-            <div
-              key={peer.userId}
-              className={`relative aspect-video rounded-2xl bg-slate-900 border overflow-hidden shadow-2xl flex items-center justify-center ${
-                peer.isSpeaking || activeSpeakerId === peer.userId
-                  ? 'border-emerald-500 ring-2 ring-emerald-500/50'
-                  : 'border-slate-800'
-              }`}
-            >
-              {peer.stream && !peer.isVideoOff ? (
-                <video
-                  ref={el => {
-                    if (el && peer.stream) {
-                      el.srcObject = peer.stream;
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-3 text-center p-4">
-                  {peer.userAvatar ? (
-                    <img
-                      src={peer.userAvatar}
-                      alt={peer.userName}
-                      className="w-16 h-16 rounded-full object-cover ring-2 ring-slate-700"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 font-bold text-lg">
-                      {peer.userName.substring(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="text-slate-300 font-semibold text-sm">{peer.userName}</span>
-                </div>
-              )}
-
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-xs px-2.5 py-1 rounded-lg flex items-center gap-2 text-white text-xs">
-                <span className="font-medium">{peer.userName}</span>
-                {peer.isAudioMuted && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
-              </div>
+            <div key={peer.userId} className="relative aspect-video rounded-2xl overflow-hidden shadow-2xl">
+              <VideoTile
+                stream={peer.stream}
+                name={peer.userName}
+                avatarUrl={peer.userAvatar}
+                isLocal={false}
+                isAudioMuted={peer.isAudioMuted}
+                isVideoOff={peer.isVideoOff}
+                isSpeaking={peer.isSpeaking || activeSpeakerId === peer.userId}
+                connectionState={peer.connectionState}
+              />
             </div>
           ))}
 
@@ -190,15 +162,80 @@ export const MeetingRoom: React.FC = () => {
               </div>
               <h4 className="text-sm font-semibold text-slate-200">Esperando a que otros se unan...</h4>
               <p className="text-xs text-slate-500 mt-1 max-w-xs">
-                La sala está lista. Puedes compartir el enlace con tus compañeros.
+                La sala está lista. Puedes compartir el enlace o invitar a tus compañeros.
               </p>
             </div>
           )}
         </div>
 
+        {/* Add Participant Modal Drawer */}
+        {showAddParticipant && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-30 animate-in fade-in">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-4 shadow-2xl">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <span className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-indigo-400" />
+                  <span>Invitar a la reunión</span>
+                </span>
+                <button
+                  onClick={() => setShowAddParticipant(false)}
+                  className="text-slate-400 hover:text-white cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <input
+                type="text"
+                placeholder="Buscar por nombre o correo..."
+                value={searchFilter}
+                onChange={e => setSearchFilter(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 mt-3 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+
+              <div className="max-h-56 overflow-y-auto mt-3 space-y-1.5">
+                {loadingUsers ? (
+                  <div className="text-center py-6 text-xs text-slate-500">Cargando colaboradores...</div>
+                ) : (
+                  workspaceUsers
+                    .filter(u => {
+                      const full = `${u.displayName} ${u.email}`.toLowerCase();
+                      return full.includes(searchFilter.toLowerCase());
+                    })
+                    .map(u => (
+                      <div
+                        key={u.id}
+                        className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-800/70 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={u.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
+                            alt={u.displayName}
+                            className="w-8 h-8 rounded-full object-cover"
+                          />
+                          <div>
+                            <span className="text-xs font-semibold text-slate-200 block">{u.displayName}</span>
+                            <span className="text-[10px] text-slate-500">{u.jobTitle || u.email}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => escalateToGroup(u.id)}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium cursor-pointer"
+                        >
+                          Invitar
+                        </button>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Right Side: Meeting In-Call Chat */}
         {showInCallChat && (
-          <div className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col h-full animate-in slide-in-from-right">
+          <div className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col h-full animate-in slide-in-from-right z-20">
             <div className="p-3 border-b border-slate-800 font-bold text-slate-100 flex items-center justify-between text-xs">
               <span className="flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-indigo-400" />
@@ -303,7 +340,7 @@ export const MeetingRoom: React.FC = () => {
         </button>
 
         <button
-          onClick={endCall}
+          onClick={handleEndCall}
           className="px-6 py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-2 transition-all shadow-lg shadow-rose-600/30 ml-4 cursor-pointer"
           title="Finalizar llamada"
         >

@@ -7,31 +7,7 @@ import { sound } from '../../services/sound';
 import { desktopNotifications } from '../../services/desktopNotifications';
 
 export const IncomingCallModal: React.FC = () => {
-  const { incomingCall, setIncomingCall } = useApp();
-  const { joinCall } = useCall();
-
-  useEffect(() => {
-    if (incomingCall) {
-      sound.playIncomingRing();
-      desktopNotifications.showNotification(`Llamada entrante de ${incomingCall.caller?.displayName || 'Colaborador'}`, {
-        body: incomingCall.isVideo ? 'Videollamada entrante' : 'Llamada de voz entrante',
-        requireInteraction: true,
-        onClick: () => {
-          window.focus();
-        }
-      });
-      // Auto dismiss after 30 seconds if unanswered
-      const timer = setTimeout(() => {
-        handleReject('timeout');
-      }, 30000);
-      return () => {
-        clearTimeout(timer);
-        sound.stopAllRings();
-      };
-    } else {
-      sound.stopAllRings();
-    }
-  }, [incomingCall]);
+  const { incomingCall, acceptCall, rejectCall } = useCall();
 
   if (!incomingCall) return null;
 
@@ -39,37 +15,11 @@ export const IncomingCallModal: React.FC = () => {
   const callerName = caller.displayName || 'Colaborador';
 
   const handleAccept = async () => {
-    sound.stopAllRings();
-    const callData = incomingCall;
-    setIncomingCall(null);
-    try {
-      await api.respondCall(caller.id, callData.callId, true, undefined, callData.roomId);
-    } catch (err) {
-      console.error('Error responding to call:', err);
-    }
-    await joinCall({
-      roomId: callData.roomId,
-      title: `Llamada con ${callerName}`,
-      callType: callData.isVideo ? 'video' : 'audio',
-      conversationId: callData.conversationId,
-      channelId: callData.channelId,
-      targetUserId: caller.id,
-      isInitiator: false
-    });
+    await acceptCall();
   };
 
   const handleReject = async (reason = 'declined') => {
-    sound.stopAllRings();
-    sound.playHangupTone();
-    const callData = incomingCall;
-    setIncomingCall(null);
-    try {
-      if (caller.id) {
-        await api.respondCall(caller.id, callData.callId, false, reason, callData.roomId);
-      }
-    } catch (err) {
-      console.error('Error rejecting call:', err);
-    }
+    await rejectCall(incomingCall.callId, reason);
   };
 
 

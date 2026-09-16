@@ -229,25 +229,8 @@ organizationsRouter.post('/', authenticate, async (req: AuthenticatedRequest, re
     await db.persistChannel(chRandom as any);
 
     // Member joins general and random
-    await db.persistChannelMember({
-      id: `cm-${chGeneralId}-${user.id}`,
-      channelId: chGeneralId,
-      userId: user.id,
-      workspaceId: wsId,
-      role: 'Admin',
-      notifications: 'All',
-      joinedAt: now
-    } as any);
-
-    await db.persistChannelMember({
-      id: `cm-${chRandomId}-${user.id}`,
-      channelId: chRandomId,
-      userId: user.id,
-      workspaceId: wsId,
-      role: 'Admin',
-      notifications: 'All',
-      joinedAt: now
-    } as any);
+    await db.persistChannelMember(chGeneralId, user.id, wsId, 'Admin');
+    await db.persistChannelMember(chRandomId, user.id, wsId, 'Admin');
 
     // 7. Audit log
     db.logAudit(

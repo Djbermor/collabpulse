@@ -170,6 +170,17 @@ class ApiClient {
     }
   }
 
+  public get<T = any>(endpoint: string): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, { method: 'GET' });
+  }
+
+  public post<T = any>(endpoint: string, body?: any): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, {
+      method: 'POST',
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+  }
+
   // --- Auth & Sessions ---
   public login(identifierOrEmail: string, password?: string, workspaceId?: string) {
     return this.request('/auth/login', {

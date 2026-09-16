@@ -15,6 +15,7 @@ import { notificationsRouter } from './server/routes/notifications';
 import { searchRouter } from './server/routes/search';
 import { adminRouter } from './server/routes/admin';
 import { signalingRouter } from './server/routes/signaling';
+import { callsRouter } from './server/routes/calls';
 import { organizationsRouter } from './server/routes/organizations';
 import { correlationMiddleware } from './server/middleware';
 import { db } from './server/db';
@@ -168,6 +169,7 @@ app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/search', searchRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/realtime/signal', signalingRouter);
+app.use('/api/v1/calls', callsRouter);
 app.use('/api/v1/organizations', organizationsRouter);
 
 // Serve physical user uploads statically
@@ -223,15 +225,16 @@ async function startServer() {
       const in15Mins = now + 15 * 60 * 1000;
 
       for (const evt of db.calendarEvents) {
-        const startTime = new Date(evt.startDate || (evt as any).startAt).getTime();
-        if (startTime > now && startTime <= in15Mins && !notifiedEvents.has(evt.id)) {
+        const startTime = new Date(evt.startAt || (evt as any).startDate).getTime();
+        const targetUserId = evt.createdBy || (evt as any).creatorId;
+        if (startTime > now && startTime <= in15Mins && !notifiedEvents.has(evt.id) && targetUserId) {
           notifiedEvents.add(evt.id);
           const minutesRemaining = Math.max(1, Math.round((startTime - now) / 60000));
           const notif = {
             id: `notif-cal-${evt.id}-${Date.now()}`,
             tenantId: evt.tenantId,
-            userId: evt.creatorId,
-            type: 'SystemAlert' as const,
+            userId: targetUserId,
+            type: 'System' as const,
             title: `Recordatorio: ${evt.title}`,
             message: `El evento "${evt.title}" comienza en ${minutesRemaining} minutos${evt.location ? ` en ${evt.location}` : ''}.`,
             linkUrl: '/calendar',
@@ -240,7 +243,7 @@ async function startServer() {
           };
           db.notifications.unshift(notif);
           await db.persistNotification(notif);
-          realtimeHub.sendToUser(evt.creatorId, 'NotificationCreated', notif);
+          realtimeHub.sendToUser(targetUserId, 'NotificationCreated', notif);
         }
       }
     } catch (err) {

@@ -27,7 +27,7 @@ import {
   REFRESH_TOKEN_LIFETIME_SECONDS
 } from '../security';
 import { authenticate, AuthenticatedRequest, requestAuditBuffer } from '../middleware';
-import { User, UserRole, UserSession, WorkspaceMember } from '../../src/types';
+import { User, UserRole, UserSession, WorkspaceMember, AccountStatus } from '../../src/types';
 import { adminAuth } from '../../src/lib/firebase-admin';
 
 export const authRouter = Router();

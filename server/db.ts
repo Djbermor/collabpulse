@@ -29,7 +29,10 @@ import {
   Organization,
   OrganizationDomain,
   OrganizationMember,
-  OrganizationSettings
+  OrganizationSettings,
+  CallSession,
+  CallParticipant,
+  CallHistoryRecord
 } from '../src/types';
 import { hashPassword, hashToken, normalizeEmail, normalizeUserName } from './security';
 import { db as pgDb, pool } from '../src/db/index.ts';
@@ -51,7 +54,10 @@ import {
   meetings as pgMeetings,
   files as pgFiles,
   auditLogs as pgAuditLogs,
-  userSessions as pgUserSessions
+  userSessions as pgUserSessions,
+  calls as pgCalls,
+  callParticipants as pgCallParticipants,
+  callHistory as pgCallHistory
 } from '../src/db/schema.ts';
 import { eq, and } from 'drizzle-orm';
 import { bootstrapDatabase } from './bootstrap.ts';
@@ -127,6 +133,9 @@ class CollabDatabase {
   public taskComments: TaskComment[] = [];
   public calendarEvents: CalendarEvent[] = [];
   public meetings: Meeting[] = [];
+  public calls: CallSession[] = [];
+  public callParticipants: CallParticipant[] = [];
+  public callHistory: CallHistoryRecord[] = [];
   public notifications: Notification[] = [];
   public organizations: Organization[] = [];
   public organizationDomains: OrganizationDomain[] = [];
@@ -553,8 +562,59 @@ class CollabDatabase {
         console.warn('[CollabDatabase] Notifications table load warning:', notifErr.message);
       }
 
+      // 19. Calls, Call Participants, and Call History from PostgreSQL (Fase 1: Call Engine Core)
+      try {
+        const callsRes = await pool.query('SELECT * FROM calls ORDER BY created_at DESC LIMIT 500');
+        this.calls = callsRes.rows.map((c: any) => ({
+          id: c.id,
+          tenantId: c.tenant_id,
+          workspaceId: c.workspace_id,
+          roomId: c.room_id,
+          origin: c.origin || 'direct',
+          type: c.type || '1:1',
+          mediaType: c.media_type || 'video',
+          direction: c.direction || 'outbound',
+          callerId: c.caller_id,
+          calleeId: c.callee_id || undefined,
+          conversationId: c.conversation_id || undefined,
+          channelId: c.channel_id || undefined,
+          state: c.status || 'ended',
+          participantIds: [c.caller_id, c.callee_id].filter(Boolean) as string[],
+          createdAt: c.created_at ? new Date(c.created_at).toISOString() : new Date().toISOString(),
+          startedAt: c.started_at ? new Date(c.started_at).toISOString() : undefined,
+          connectedAt: c.connected_at ? new Date(c.connected_at).toISOString() : undefined,
+          endedAt: c.ended_at ? new Date(c.ended_at).toISOString() : undefined,
+          durationSeconds: c.duration_seconds || 0,
+          endReason: c.end_reason || undefined
+        }));
+
+        const participantsRes = await pool.query('SELECT * FROM call_participants ORDER BY created_at ASC');
+        this.callParticipants = participantsRes.rows.map((p: any) => ({
+          id: p.id,
+          callId: p.call_id,
+          userId: p.user_id,
+          role: p.role || 'participant',
+          state: p.state || 'invited',
+          joinedAt: p.joined_at ? new Date(p.joined_at).toISOString() : undefined,
+          leftAt: p.left_at ? new Date(p.left_at).toISOString() : undefined,
+          createdAt: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString()
+        }));
+
+        const historyRes = await pool.query('SELECT * FROM call_history ORDER BY created_at DESC LIMIT 1000');
+        this.callHistory = historyRes.rows.map((h: any) => ({
+          id: h.id,
+          callId: h.call_id,
+          eventType: h.event_type,
+          userId: h.user_id || undefined,
+          metadata: typeof h.metadata === 'string' ? (() => { try { return JSON.parse(h.metadata); } catch { return {}; } })() : h.metadata,
+          createdAt: h.created_at ? new Date(h.created_at).toISOString() : new Date().toISOString()
+        }));
+      } catch (callErr: any) {
+        console.warn('[CollabDatabase] Call Engine tables load warning:', callErr.message);
+      }
+
       this.isPostgresConnected = true;
-      console.log(`[CollabDatabase] Synced successfully from PostgreSQL (${this.organizations.length} orgs, ${this.users.length} users, ${this.channels.length} channels, ${this.messages.length} messages, ${this.notifications.length} notifications, ${this.tasks.length} tasks).`);
+      console.log(`[CollabDatabase] Synced successfully from PostgreSQL (${this.organizations.length} orgs, ${this.users.length} users, ${this.channels.length} channels, ${this.messages.length} messages, ${this.notifications.length} notifications, ${this.calls.length} calls).`);
     } catch (err) {
       console.error('[CollabDatabase] Failed to sync from PostgreSQL:', err);
     }
@@ -1104,6 +1164,106 @@ class CollabDatabase {
     } catch (error) {
       console.error('[PostgreSQL] persistMeeting error:', error);
     }
+  }
+
+  public async persistCall(c: CallSession) {
+    try {
+      await pgDb.insert(pgCalls).values({
+        id: c.id,
+        tenantId: c.tenantId,
+        workspaceId: c.workspaceId,
+        roomId: c.roomId,
+        origin: c.origin || 'direct',
+        type: c.type || '1:1',
+        mediaType: c.mediaType || 'video',
+        direction: c.direction || 'outbound',
+        callerId: c.callerId,
+        calleeId: c.calleeId || null,
+        conversationId: c.conversationId || null,
+        channelId: c.channelId || null,
+        status: c.state || 'initiating',
+        startedAt: c.createdAt ? new Date(c.createdAt) : new Date(),
+        connectedAt: c.connectedAt ? new Date(c.connectedAt) : null,
+        endedAt: c.endedAt ? new Date(c.endedAt) : null,
+        durationSeconds: c.durationSeconds || 0,
+        endReason: c.endReason || null,
+        createdAt: c.createdAt ? new Date(c.createdAt) : new Date()
+      }).onConflictDoUpdate({
+        target: pgCalls.id,
+        set: {
+          status: c.state,
+          connectedAt: c.connectedAt ? new Date(c.connectedAt) : null,
+          endedAt: c.endedAt ? new Date(c.endedAt) : null,
+          durationSeconds: c.durationSeconds || 0,
+          endReason: c.endReason || null
+        }
+      });
+
+      const existingIdx = this.calls.findIndex(call => call.id === c.id);
+      if (existingIdx >= 0) {
+        this.calls[existingIdx] = { ...this.calls[existingIdx], ...c };
+      } else {
+        this.calls.unshift(c);
+      }
+    } catch (error) {
+      console.error('[PostgreSQL] persistCall error:', error);
+    }
+  }
+
+  public async persistCallParticipant(p: CallParticipant) {
+    try {
+      await pgDb.insert(pgCallParticipants).values({
+        id: p.id,
+        callId: p.callId,
+        userId: p.userId,
+        role: p.role || 'caller',
+        state: p.state || 'invited',
+        joinedAt: p.joinedAt ? new Date(p.joinedAt) : null,
+        leftAt: p.leftAt ? new Date(p.leftAt) : null,
+        createdAt: p.createdAt ? new Date(p.createdAt) : new Date()
+      }).onConflictDoUpdate({
+        target: pgCallParticipants.id,
+        set: {
+          state: p.state,
+          joinedAt: p.joinedAt ? new Date(p.joinedAt) : null,
+          leftAt: p.leftAt ? new Date(p.leftAt) : null
+        }
+      });
+
+      const existingIdx = this.callParticipants.findIndex(part => part.id === p.id);
+      if (existingIdx >= 0) {
+        this.callParticipants[existingIdx] = { ...this.callParticipants[existingIdx], ...p };
+      } else {
+        this.callParticipants.push(p);
+      }
+    } catch (error) {
+      console.error('[PostgreSQL] persistCallParticipant error:', error);
+    }
+  }
+
+  public async persistCallHistory(h: CallHistoryRecord) {
+    try {
+      await pgDb.insert(pgCallHistory).values({
+        id: h.id,
+        callId: h.callId,
+        eventType: h.eventType,
+        userId: h.userId || null,
+        metadata: typeof h.metadata === 'string' ? h.metadata : JSON.stringify(h.metadata || {}),
+        createdAt: h.createdAt ? new Date(h.createdAt) : new Date()
+      });
+
+      this.callHistory.unshift(h);
+    } catch (error) {
+      console.error('[PostgreSQL] persistCallHistory error:', error);
+    }
+  }
+
+  public getCall(id: string): CallSession | undefined {
+    return this.calls.find(c => c.id === id || c.roomId === id);
+  }
+
+  public getCallsByTenant(tenantId: string): CallSession[] {
+    return this.calls.filter(c => c.tenantId === tenantId);
   }
 
   public async persistFile(f: any) {

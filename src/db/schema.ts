@@ -274,6 +274,51 @@ export const meetings = pgTable('meetings', {
   endedAt: timestamp('ended_at', { withTimezone: true }),
 });
 
+// 19.1 CALLS (CALL ENGINE CORE - FASE 1)
+export const calls = pgTable('calls', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').references(() => tenants.id).notNull(),
+  workspaceId: text('workspace_id').references(() => workspaces.id).notNull(),
+  roomId: text('room_id').notNull(),
+  origin: text('origin').default('direct').notNull(), // 'direct', 'conversation', 'channel', 'meeting'
+  type: text('type').default('1:1').notNull(), // '1:1', 'group'
+  mediaType: text('media_type').default('video').notNull(), // 'audio', 'video'
+  direction: text('direction').default('outbound').notNull(), // 'inbound', 'outbound'
+  callerId: text('caller_id').references(() => users.id).notNull(),
+  calleeId: text('callee_id').references(() => users.id),
+  conversationId: text('conversation_id'),
+  channelId: text('channel_id'),
+  status: text('status').default('initiating').notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+  connectedAt: timestamp('connected_at', { withTimezone: true }),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  durationSeconds: integer('duration_seconds').default(0),
+  endReason: text('end_reason'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 19.2 CALL PARTICIPANTS
+export const callParticipants = pgTable('call_participants', {
+  id: text('id').primaryKey(),
+  callId: text('call_id').references(() => calls.id).notNull(),
+  userId: text('user_id').references(() => users.id).notNull(),
+  role: text('role').default('caller').notNull(), // 'caller', 'callee', 'participant', 'host'
+  state: text('state').default('invited').notNull(), // 'invited', 'ringing', 'connected', 'held', 'left', 'declined', 'missed'
+  joinedAt: timestamp('joined_at', { withTimezone: true }),
+  leftAt: timestamp('left_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 19.3 CALL HISTORY & EVENT AUDIT
+export const callHistory = pgTable('call_history', {
+  id: text('id').primaryKey(),
+  callId: text('call_id').references(() => calls.id).notNull(),
+  eventType: text('event_type').notNull(), // 'outgoing', 'incoming', 'accepted', 'declined', 'missed', 'cancelled', 'connected', 'held', 'resumed', 'reconnecting', 'completed', 'failed', 'timeout'
+  userId: text('user_id').references(() => users.id),
+  metadata: text('metadata').default('{}'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // 20. FILES
 export const files = pgTable('files', {
   id: text('id').primaryKey(),
