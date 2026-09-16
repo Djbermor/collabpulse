@@ -1,0 +1,32 @@
+# ==============================================================================
+# CollabPulse - Local Development Overrides (Docker Compose)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# ==============================================================================
+services:
+  api:
+    build:
+      target: build
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_DETAILEDERRORS=true
+    ports:
+      - "5000:8080"
+    volumes:
+      - ../../backend:/src:cached
+
+  frontend:
+    ports:
+      - "4200:80"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  storage:
+    ports:
+      - "9000:9000"
+      - "9001:9001"

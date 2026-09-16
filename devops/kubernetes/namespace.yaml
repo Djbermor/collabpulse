@@ -1,0 +1,18 @@
+# ==============================================================================
+# CollabPulse - Kubernetes Namespaces
+# ==============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: collabpulse-prod
+  labels:
+    environment: production
+    app.kubernetes.io/part-of: collabpulse
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: collabpulse-staging
+  labels:
+    environment: staging
+    app.kubernetes.io/part-of: collabpulse

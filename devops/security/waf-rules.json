@@ -1,0 +1,63 @@
+{
+  "policyName": "CollabPulseWAFPolicy",
+  "mode": "Prevention",
+  "redirectUrl": "https://collabpulse.com/waf-block.html",
+  "customBlockResponseStatusCode": 403,
+  "managedRuleSets": [
+    {
+      "ruleSetType": "Microsoft_DefaultRuleSet",
+      "ruleSetVersion": "2.1",
+      "action": "Block",
+      "ruleGroupOverrides": [
+        {
+          "ruleGroupName": "SQLI",
+          "rules": [
+            { "ruleId": "942100", "action": "Block", "enabledState": "Enabled" },
+            { "ruleId": "942110", "action": "Block", "enabledState": "Enabled" },
+            { "ruleId": "942120", "action": "Block", "enabledState": "Enabled" }
+          ]
+        },
+        {
+          "ruleGroupName": "XSS",
+          "rules": [
+            { "ruleId": "941100", "action": "Block", "enabledState": "Enabled" },
+            { "ruleId": "941110", "action": "Block", "enabledState": "Enabled" }
+          ]
+        },
+        {
+          "ruleGroupName": "RCE",
+          "rules": [
+            { "ruleId": "932100", "action": "Block", "enabledState": "Enabled" }
+          ]
+        },
+        {
+          "ruleGroupName": "LFI",
+          "rules": [
+            { "ruleId": "930100", "action": "Block", "enabledState": "Enabled" }
+          ]
+        }
+      ]
+    },
+    {
+      "ruleSetType": "Microsoft_BotManagerRuleSet",
+      "ruleSetVersion": "1.0",
+      "action": "Block"
+    }
+  ],
+  "rateLimitRules": [
+    {
+      "name": "AuthBruteForceProtection",
+      "priority": 100,
+      "rateLimitDurationInMinutes": 1,
+      "rateLimitThreshold": 10,
+      "matchConditions": [
+        {
+          "matchVariable": "RequestUri",
+          "operator": "Contains",
+          "matchValues": ["/api/v1/auth/login", "/api/v1/auth/forgot-password"]
+        }
+      ],
+      "action": "Block"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+# ==============================================================================
+# CollabPulse - Backend Web API Multi-Stage Dockerfile (.NET 8.0 ASP.NET Core)
+# ==============================================================================
+
+# Stage 1: Build and Unit Testing
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+
+# Copy project files first for layer caching
+COPY backend/CollabPulse.sln ./
+COPY backend/src/CollabPulse.Domain/CollabPulse.Domain.csproj src/CollabPulse.Domain/
+COPY backend/src/CollabPulse.Application/CollabPulse.Application.csproj src/CollabPulse.Application/
+COPY backend/src/CollabPulse.Infrastructure/CollabPulse.Infrastructure.csproj src/CollabPulse.Infrastructure/
+COPY backend/src/CollabPulse.Api/CollabPulse.Api.csproj src/CollabPulse.Api/
+
+RUN dotnet restore backend/CollabPulse.sln
+
+# Copy entire source tree
+COPY backend/ .
+
+# Build release
+RUN dotnet build backend/CollabPulse.sln -c Release --no-restore
+
+# Stage 2: Publish Self-Contained / ReadyToRun Binaries
+FROM build AS publish
+RUN dotnet publish src/CollabPulse.Api/CollabPulse.Api.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-build \
+    /p:UseAppHost=false
+
+# Stage 3: Minimal Chiseled / Alpine Security-Hardened Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine AS runtime
+WORKDIR /app
+
+# Install curl/wget for health checks and security updates
+RUN apk --no-cache add curl tzdata ca-certificates && \
+    addgroup -g 10001 collabpulse && \
+    adduser -u 10000 -G collabpulse -D -h /app -s /sbin/nologin appuser
+
+# Copy published artifacts
+COPY --from=publish /app/publish .
+
+# Set strict permissions
+RUN chown -R appuser:collabpulse /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose standard unprivileged container port
+ENV ASPNETCORE_HTTP_PORTS=8080 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+    LC_ALL=en_US.UTF-8 \
+    LANG=en_US.UTF-8
+
+EXPOSE 8080
+
+# Production Healthcheck
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8080/health/live || exit 1
+
+ENTRYPOINT ["dotnet", "CollabPulse.Api.dll"]

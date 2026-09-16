@@ -1,0 +1,88 @@
+# ==============================================================================
+# CollabPulse - Backend Web API Deployment (Stateless, Zero-Downtime Rolling)
+# ==============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collabpulse-api
+  namespace: collabpulse-prod
+  labels:
+    app.kubernetes.io/name: collabpulse-api
+    app.kubernetes.io/part-of: collabpulse
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collabpulse-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: collabpulse-api
+        app.kubernetes.io/part-of: collabpulse
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - collabpulse-api
+                topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: api
+          image: acrcollabpulseprod.azurecr.io/collabpulse/api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: collabpulse-config
+            - secretRef:
+                name: collabpulse-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1536Mi"
+          # Section 18: Liveness and Readiness Probes
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10000
+            capabilities:
+              drop:
+                - ALL

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collabpulse-api
+  labels:
+    app: collabpulse-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: collabpulse-api
+  template:
+    metadata:
+      labels:
+        app: collabpulse-api
+    spec:
+      containers:
+      - name: api
+        image: collabpulse/api:latest
+        ports:
+        - containerPort: 5000
+        envFrom:
+        - configMapRef:
+            name: collabpulse-config
+        - secretRef:
+            name: collabpulse-secrets
+        livenessProbe:
+          httpGet:
+            path: /health/ready
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collabpulse-worker
+  labels:
+    app: collabpulse-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: collabpulse-worker
+  template:
+    metadata:
+      labels:
+        app: collabpulse-worker
+    spec:
+      containers:
+      - name: worker
+        image: collabpulse/worker:latest
+        envFrom:
+        - configMapRef:
+            name: collabpulse-config
+        - secretRef:
+            name: collabpulse-secrets

@@ -1,0 +1,46 @@
+# ==============================================================================
+# CollabPulse - Prometheus Metrics Scraping Configuration
+# ==============================================================================
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'collabpulse-production-monitor'
+
+rule_files:
+  - "alerts.yaml"
+
+scrape_configs:
+  # CollabPulse .NET API Cluster
+  - job_name: 'collabpulse-api'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['api:8080']
+        labels:
+          tier: 'backend'
+          environment: 'production'
+
+  # PostgreSQL Exporter
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          tier: 'database'
+          environment: 'production'
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          tier: 'cache'
+          environment: 'production'
+
+  # Nginx Gateway Exporter
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+        labels:
+          tier: 'gateway'
+          environment: 'production'

@@ -1,0 +1,82 @@
+# ==============================================================================
+# CollabPulse - Prometheus Alert Rules (SRE & On-Call Policies)
+# ==============================================================================
+groups:
+  - name: collabpulse-critical-alerts
+    rules:
+      # 1. API 5xx Spike Alert
+      - alert: HighHttp5xxErrorRate
+        expr: (sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) * 100 > 1
+        for: 2m
+        labels:
+          severity: critical
+          team: sre
+        annotations:
+          summary: "High HTTP 5xx error rate detected on API"
+          description: "HTTP 5xx error rate is {{ $value }}% (threshold: > 1%). Check API logs and correlation IDs."
+
+      # 2. High Latency P95 Alert
+      - alert: ApiLatencyHighP95
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "API P95 Latency exceeds 500ms"
+          description: "P95 latency is currently {{ $value }} seconds for backend requests."
+
+      # 3. PostgreSQL Database Connection Pool Exhaustion
+      - alert: DatabasePoolExhaustion
+        expr: (pg_stat_activity_count / pg_settings_max_connections) * 100 > 85
+        for: 2m
+        labels:
+          severity: critical
+          team: dba
+        annotations:
+          summary: "PostgreSQL active connection pool > 85%"
+          description: "Connection pool is nearing capacity ({{ $value }}%). Risk of connection rejection."
+
+      # 4. Redis Memory Saturation
+      - alert: RedisMemoryHigh
+        expr: (redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90
+        for: 3m
+        labels:
+          severity: warning
+          team: sre
+        annotations:
+          summary: "Redis memory utilization > 90%"
+          description: "Redis instance memory used is at {{ $value }}%."
+
+      # 5. SignalR Massive Disconnect Spike
+      - alert: SignalRDisconnectSpike
+        expr: rate(signalr_connections_disconnected_total[1m]) > 50
+        for: 1m
+        labels:
+          severity: warning
+          team: realtime
+        annotations:
+          summary: "Abnormal SignalR client disconnection rate"
+          description: "More than 50 real-time client disconnections per second in the last minute."
+
+      # 6. Background Queue Backlog
+      - alert: BackgroundQueueBacklogHigh
+        expr: collabpulse_queue_pending_jobs > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Background worker queue depth exceeds 500 tasks"
+          description: "Worker processing queue has {{ $value }} backlog items waiting."
+
+      # 7. TLS Certificate Expiry Warning
+      - alert: TlsCertExpirySoon
+        expr: (x509_cert_not_after - time()) / 86400 < 15
+        for: 1h
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "TLS Certificate expires in less than 15 days"
+          description: "Certificate for {{ $labels.instance }} will expire in {{ $value }} days."

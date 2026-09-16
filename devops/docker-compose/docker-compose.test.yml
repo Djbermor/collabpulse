@@ -1,0 +1,28 @@
+# ==============================================================================
+# CollabPulse - Testing & CI Overrides (Docker Compose)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm test-runner
+# ==============================================================================
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: collabpulse_test
+    tmpfs:
+      - /var/lib/postgresql/data # Fast in-memory ephemeral disk for unit/integration tests
+
+  test-runner:
+    build:
+      context: ../../
+      dockerfile: devops/docker/Dockerfile.api
+      target: build
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Testing
+      - ConnectionStrings__Database=Host=postgres;Port=5432;Database=collabpulse_test;Username=collabpulse_admin;Password=AdminSuperSecretPassword_ChangeInVault;
+      - ConnectionStrings__Redis=redis:6379,password=RedisStrongAuthSecret_ChangeMe
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["dotnet", "test", "backend/CollabPulse.sln", "--logger:trx", "--results-directory", "/test-results"]
+    volumes:
+      - ../../test-results:/test-results

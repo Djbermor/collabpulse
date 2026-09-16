@@ -1,0 +1,62 @@
+# ==============================================================================
+# CollabPulse - Production Ingress (NGINX Ingress Controller / TLS Let's Encrypt)
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: collabpulse-ingress
+  namespace: collabpulse-prod
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "collabpulse-api-svc"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: SAMEORIGIN";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+spec:
+  tls:
+    - hosts:
+        - app.collabpulse.com
+        - api.collabpulse.com
+      secretName: collabpulse-tls-cert
+  rules:
+    - host: app.collabpulse.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: collabpulse-api-svc
+                port:
+                  number: 8080
+          - path: /signalr
+            pathType: Prefix
+            backend:
+              service:
+                name: collabpulse-api-svc
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: collabpulse-frontend-svc
+                port:
+                  number: 80
+    - host: api.collabpulse.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: collabpulse-api-svc
+                port:
+                  number: 8080

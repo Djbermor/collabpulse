@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "title": "CollabPulse SaaS Production Architecture Spec",
+    "description": "Enterprise multi-tenant topology matching Section 13 (Azure Front Door -> Container Apps / AKS -> PostgreSQL Flexible / Redis / Blob / Key Vault)",
+    "topology": {
+      "edge": "Azure Front Door (WAF, TLS termination, CDN for Angular assets)",
+      "ingress": "Container App Managed Environment with Internal Ingress",
+      "compute": [
+        "Frontend (Angular 18+ Nginx Alpine)",
+        "API (ASP.NET Core 8 Web API, stateless, CQRS pipeline)",
+        "Worker (Background Worker for Jobs, Notifications, Webhooks)"
+      ],
+      "data": {
+        "relational": "Azure Database for PostgreSQL Flexible Server (Zone redundant, 35-day PITR)",
+        "cache_realtime": "Azure Cache for Redis (Premium, SignalR backplane, session state)",
+        "object_storage": "Azure Blob Storage (ZRS, private containers, SAS short-lived tokens)"
+      },
+      "security": {
+        "secrets": "Azure Key Vault with Managed Identity CSI driver",
+        "rbac": "Azure Entra ID Workload Identity"
+      },
+      "observability": {
+        "telemetry": "Azure Application Insights & Log Analytics Workspace",
+        "tracing": "OpenTelemetry Distributed Tracing (W3C TraceContext)"
+      }
+    }
+  }
+}

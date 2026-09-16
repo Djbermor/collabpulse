@@ -1,0 +1,7 @@
+{
+  "name": "CollabPulse - Enterprise Communication Platform",
+  "description": "Plataforma empresarial de comunicación y colaboración en tiempo real con mensajería multicanal, hilos, videollamadas, tareas y gestión multi-tenant.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

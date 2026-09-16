@@ -1,0 +1,81 @@
+# ==============================================================================
+# CollabPulse - Zero-Trust Network Policies
+# Ensures strict east-west isolation: database and redis are accessible
+# ONLY by the Backend API and Background Worker pods.
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: collabpulse-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow Ingress to Frontend from Ingress Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-ingress
+  namespace: collabpulse-prod
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: collabpulse-frontend
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+---
+# Allow Ingress to API from Ingress Controller and Frontend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress
+  namespace: collabpulse-prod
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: collabpulse-api
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: collabpulse-frontend
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Allow API and Worker to reach Database & Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-egress
+  namespace: collabpulse-prod
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: ["collabpulse-api", "collabpulse-worker"]
+  egress:
+    - ports:
+        - protocol: TCP
+          port: 5432 # PostgreSQL
+        - protocol: TCP
+          port: 6379 # Redis
+        - protocol: TCP
+          port: 443  # Azure Blob Storage & Key Vault (HTTPS)
+        - protocol: UDP
+          port: 53   # CoreDNS
+        - protocol: TCP
+          port: 53   # CoreDNS

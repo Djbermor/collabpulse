@@ -1,0 +1,29 @@
+# ==============================================================================
+# CollabPulse - Dedicated Database Migration Runner
+# ==============================================================================
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+
+COPY backend/CollabPulse.sln ./
+COPY backend/src/CollabPulse.Domain/CollabPulse.Domain.csproj src/CollabPulse.Domain/
+COPY backend/src/CollabPulse.Application/CollabPulse.Application.csproj src/CollabPulse.Application/
+COPY backend/src/CollabPulse.Infrastructure/CollabPulse.Infrastructure.csproj src/CollabPulse.Infrastructure/
+COPY backend/src/CollabPulse.Api/CollabPulse.Api.csproj src/CollabPulse.Api/
+
+RUN dotnet restore backend/CollabPulse.sln
+COPY backend/ .
+
+# Install EF Core CLI global tool
+RUN dotnet tool install --tool-path /tools dotnet-ef
+
+# Generate runtime bundle or run migrations executable
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS runner
+WORKDIR /app
+
+COPY --from=build /tools /tools
+COPY --from=build /src /app
+
+ENV PATH="${PATH}:/tools"
+
+ENTRYPOINT ["dotnet", "ef", "database", "update", "--project", "src/CollabPulse.Infrastructure", "--startup-project", "src/CollabPulse.Api"]

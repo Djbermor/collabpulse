@@ -1,0 +1,49 @@
+version: '3.8'
+
+# ==============================================================================
+# CollabPulse Enterprise (PumbleClone) - Local Development Docker Compose (Section 51-52)
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Services: postgres, redis, mailhog
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: collabpulse-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: collabpulse_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d collabpulse_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: collabpulse-dev-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: collabpulse-dev-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+
+volumes:
+  dev_postgres_data:

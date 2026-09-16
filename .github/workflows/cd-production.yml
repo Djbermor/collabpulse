@@ -1,0 +1,115 @@
+# ==============================================================================
+# CollabPulse - Production Deployment Pipeline (Zero-Downtime & Auto-Rollback)
+# ==============================================================================
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release Semantic Version (e.g., v1.2.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  pre-deploy-check:
+    name: Pre-Flight Integrity & Approvals
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Acknowledge Production Target
+        run: echo "Initiating deployment for tag: ${{ github.ref_name || github.event.inputs.version }}"
+
+  build-and-push-prod:
+    name: Build & Sign Immutable Images
+    needs: [pre-deploy-check]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_NAME_PROD }}
+
+      - name: Build & Push Images
+        env:
+          REGISTRY: ${{ secrets.ACR_NAME_PROD }}.azurecr.io
+          VERSION: ${{ github.ref_name || github.event.inputs.version }}
+        run: |
+          echo "Building production frontend container..."
+          docker build -f devops/docker/Dockerfile.frontend -t $REGISTRY/collabpulse/frontend:$VERSION -t $REGISTRY/collabpulse/frontend:latest .
+          docker push $REGISTRY/collabpulse/frontend:$VERSION
+          docker push $REGISTRY/collabpulse/frontend:latest
+
+  database-migration:
+    name: Pre-Deployment Backup & Migration
+    needs: [build-and-push-prod]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Trigger Pre-Deployment Database Snapshot
+        run: |
+          echo "Triggering Azure Database for PostgreSQL on-demand snapshot..."
+          az postgres flexible-server backup create \
+            --resource-group rg-collabpulse-prod \
+            --name psql-collabpulse-prod \
+            --backup-name "pre-deploy-${{ github.sha }}"
+
+      - name: Run Dedicated Migration Job
+        run: |
+          echo "Executing EF Core Database Migrations via dedicated container job..."
+          az containerapp job start --name job-migrate-db-prod --resource-group rg-collabpulse-prod
+
+  rolling-deploy:
+    name: Rolling Update & Zero-Downtime Deployment
+    needs: [database-migration]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy New Frontend Revision
+        run: |
+          VERSION="${{ github.ref_name || github.event.inputs.version }}"
+          az containerapp update \
+            --name ca-frontend-prod \
+            --resource-group rg-collabpulse-prod \
+            --image ${{ secrets.ACR_NAME_PROD }}.azurecr.io/collabpulse/frontend:$VERSION
+
+      - name: Run Automated Post-Deployment Smoke Tests
+        id: smoke_tests
+        run: |
+          echo "Verifying health and readiness endpoints..."
+          chmod +x devops/scripts/smoke-test.sh
+          ./devops/scripts/smoke-test.sh https://app.collabpulse.com
+
+      - name: Automatic Rollback on Failure
+        if: failure() && steps.smoke_tests.outcome == 'failure'
+        run: |
+          echo "🚨 Smoke test failed! Initiating automatic rollback to previous stable revision..."
+          # Revert container app traffic to previous revision
+          az containerapp revision list -n ca-frontend-prod -g rg-collabpulse-prod --query "[1].name" -o tsv | xargs -I {} az containerapp revision activate -n ca-frontend-prod -g rg-collabpulse-prod --revision {}
+          exit 1

@@ -1,0 +1,166 @@
+# ==============================================================================
+# CollabPulse - Base Multi-Container Stack (Docker Compose)
+# ==============================================================================
+name: collabpulse
+
+services:
+  # Reverse Proxy & SSL / HTTP Routing
+  reverse-proxy:
+    image: nginx:1.25-alpine
+    container_name: collabpulse-proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../nginx/security-headers.conf:/etc/nginx/security-headers.conf:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - collabpulse-public
+      - collabpulse-internal
+
+  # Angular Frontend (Served via Nginx Alpine)
+  frontend:
+    build:
+      context: ../../
+      dockerfile: devops/docker/Dockerfile.frontend
+    container_name: collabpulse-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    networks:
+      - collabpulse-public
+
+  # ASP.NET Core Backend Web API
+  api:
+    build:
+      context: ../../
+      dockerfile: devops/docker/Dockerfile.api
+    container_name: collabpulse-api
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__Database=Host=postgres;Port=5432;Database=collabpulse_prod;Username=collabpulse_app;Password=SuperSecureSecretPassword_ChangeInVault;SSL Mode=Prefer;
+      - ConnectionStrings__Redis=redis:6379,password=RedisStrongAuthSecret_ChangeMe,abortConnect=false
+      - Storage__Provider=AzureBlob
+      - Storage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=collabstorage;AccountKey=StorageKeyDefaultSecret123;BlobEndpoint=http://storage:9000/collabstorage;
+      - Jwt__Issuer=https://api.collabpulse.com
+      - Jwt__Audience=https://collabpulse.com
+      - Jwt__Key=CollabPulse_Super_Secret_HS512_Signing_Key_2026_SecureKeyVault
+      - CORS__AllowedOrigins=https://collabpulse.com,http://localhost
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+    networks:
+      - collabpulse-internal
+
+  # Background Asynchronous Worker
+  worker:
+    build:
+      context: ../../
+      dockerfile: devops/docker/Dockerfile.worker
+    container_name: collabpulse-worker
+    restart: unless-stopped
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+      - ConnectionStrings__Database=Host=postgres;Port=5432;Database=collabpulse_prod;Username=collabpulse_worker;Password=WorkerSecretPassword_ChangeInVault;
+      - ConnectionStrings__Redis=redis:6379,password=RedisStrongAuthSecret_ChangeMe,abortConnect=false
+      - Storage__Provider=AzureBlob
+      - Storage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=collabstorage;AccountKey=StorageKeyDefaultSecret123;BlobEndpoint=http://storage:9000/collabstorage;
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - collabpulse-internal
+
+  # PostgreSQL Database (Relational Store with strict schemas & indexes)
+  postgres:
+    image: postgres:16-alpine
+    container_name: collabpulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: collabpulse_prod
+      POSTGRES_USER: collabpulse_admin
+      POSTGRES_PASSWORD: AdminSuperSecretPassword_ChangeInVault
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../database/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ../database/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U collabpulse_admin -d collabpulse_prod"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - collabpulse-internal
+
+  # Redis Cluster / Cache / SignalR Backplane / Distributed Locks
+  redis:
+    image: redis:7.2-alpine
+    container_name: collabpulse-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "RedisStrongAuthSecret_ChangeMe", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "RedisStrongAuthSecret_ChangeMe", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - collabpulse-internal
+
+  # Object Storage (MinIO S3 / Blob compatible storage for local/testing)
+  storage:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    container_name: collabpulse-storage
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: collabstorage
+      MINIO_ROOT_PASSWORD: StorageKeyDefaultSecret123
+    volumes:
+      - blob-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+    networks:
+      - collabpulse-internal
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  blob-data:
+    driver: local
+
+networks:
+  collabpulse-public:
+    driver: bridge
+  collabpulse-internal:
+    internal: false

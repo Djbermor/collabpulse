@@ -1,0 +1,128 @@
+version: '3.8'
+
+# ==============================================================================
+# CollabPulse Enterprise (PumbleClone) - Production Docker Compose (Section 51)
+# Services: postgres, redis, api, worker, frontend, nginx
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: collabpulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-collabpulse}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d collabpulse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - collabpulse-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: collabpulse-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-redispassword}"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispassword}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - collabpulse-network
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: collabpulse-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      DATABASE_CONNECTION: Host=postgres;Port=5432;Database=collabpulse;Username=postgres;Password=postgres
+      REDIS_CONNECTION: redis:6379,password=redispassword
+      JWT_SECRET: ${JWT_SECRET:-SuperSecretEnterpriseKeyWith256BitsMinimumSecurityRequiredForProductionTokenSigning!}
+      JWT_ISSUER: CollabPulseAuthServer
+      JWT_AUDIENCE: CollabPulseClients
+      STORAGE_CONNECTION: ${STORAGE_CONNECTION:-UseDevelopmentStorage=true}
+      STORAGE_CONTAINER: collabpulse-blobs
+      EMAIL_PROVIDER: MockSmtp
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - collabpulse-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: collabpulse-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      DATABASE_CONNECTION: Host=postgres;Port=5432;Database=collabpulse;Username=postgres;Password=postgres
+      REDIS_CONNECTION: redis:6379,password=redispassword
+      STORAGE_CONNECTION: ${STORAGE_CONNECTION:-UseDevelopmentStorage=true}
+      STORAGE_CONTAINER: collabpulse-blobs
+    networks:
+      - collabpulse-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: collabpulse-frontend
+    restart: unless-stopped
+    networks:
+      - collabpulse-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: collabpulse-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - collabpulse-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  collabpulse-network:
+    driver: bridge

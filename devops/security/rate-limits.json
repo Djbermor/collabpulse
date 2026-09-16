@@ -1,0 +1,27 @@
+{
+  "RateLimitingTiers": {
+    "Anonymous": {
+      "General": { "PermitLimit": 60, "WindowSeconds": 60 },
+      "AuthLogin": { "PermitLimit": 5, "WindowSeconds": 60, "QueueLimit": 0 },
+      "AuthRegister": { "PermitLimit": 3, "WindowSeconds": 60, "QueueLimit": 0 },
+      "PasswordReset": { "PermitLimit": 3, "WindowSeconds": 300, "QueueLimit": 0 }
+    },
+    "Authenticated": {
+      "GeneralApi": { "PermitLimit": 300, "WindowSeconds": 60 },
+      "MessagingSend": { "PermitLimit": 60, "WindowSeconds": 60 },
+      "Search": { "PermitLimit": 40, "WindowSeconds": 60 },
+      "FileUpload": { "PermitLimit": 15, "WindowSeconds": 60 },
+      "RealtimeTyping": { "PermitLimit": 120, "WindowSeconds": 60 }
+    },
+    "Admin": {
+      "GeneralApi": { "PermitLimit": 1200, "WindowSeconds": 60 },
+      "WorkspaceInvitations": { "PermitLimit": 50, "WindowSeconds": 60 },
+      "AuditLogQuery": { "PermitLimit": 60, "WindowSeconds": 60 }
+    },
+    "Internal": {
+      "PermitLimit": 10000,
+      "WindowSeconds": 60,
+      "BypassAllowed": true
+    }
+  }
+}

@@ -1,0 +1,26 @@
+# ==============================================================================
+# CollabPulse - Production ConfigMap (Environment variables without secrets)
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: collabpulse-config
+  namespace: collabpulse-prod
+  labels:
+    app.kubernetes.io/name: collabpulse
+    app.kubernetes.io/component: configuration
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  DOTNET_ENVIRONMENT: "Production"
+  Serilog__MinimumLevel: "Information"
+  Serilog__WriteTo__0__Name: "Console"
+  Serilog__WriteTo__0__Args__formatter: "Serilog.Formatting.Json.JsonFormatter, Serilog"
+  Storage__Provider: "AzureBlob"
+  Storage__ContainerName: "collabpulse-files"
+  Storage__AllowedMimeTypes: "image/jpeg,image/png,image/gif,application/pdf,application/zip,text/plain,audio/mpeg,video/mp4"
+  Storage__MaxFileSizeBytes: "52428800" # 50 MB
+  Cors__AllowedOrigins: "https://collabpulse.com,https://app.collabpulse.com"
+  Features__EnableAiSummarizer: "true"
+  Features__EnableVideoCalls: "true"
+  Features__EnableAdvancedSearch: "true"
+  Maintenance__Enabled: "false"

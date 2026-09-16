@@ -1,0 +1,45 @@
+# ==============================================================================
+# CollabPulse - Background Worker Multi-Stage Dockerfile (.NET 8.0 Worker)
+# ==============================================================================
+
+# Stage 1: Build Worker Project
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+
+COPY backend/CollabPulse.sln ./
+COPY backend/src/CollabPulse.Domain/CollabPulse.Domain.csproj src/CollabPulse.Domain/
+COPY backend/src/CollabPulse.Application/CollabPulse.Application.csproj src/CollabPulse.Application/
+COPY backend/src/CollabPulse.Infrastructure/CollabPulse.Infrastructure.csproj src/CollabPulse.Infrastructure/
+COPY backend/src/CollabPulse.Api/CollabPulse.Api.csproj src/CollabPulse.Api/
+
+RUN dotnet restore backend/CollabPulse.sln
+
+COPY backend/ .
+
+# Build API and shared infrastructure assemblies
+RUN dotnet build backend/CollabPulse.sln -c Release --no-restore
+
+# Stage 2: Publish Worker Binary
+FROM build AS publish
+RUN dotnet publish src/CollabPulse.Infrastructure/CollabPulse.Infrastructure.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-build
+
+# Stage 3: Minimal Background Runtime
+FROM mcr.microsoft.com/dotnet/runtime:8.0-alpine AS runtime
+WORKDIR /app
+
+RUN apk --no-cache add ca-certificates tzdata && \
+    addgroup -g 10001 collabpulse && \
+    adduser -u 10000 -G collabpulse -D -h /app -s /sbin/nologin workeruser
+
+COPY --from=publish /app/publish .
+
+RUN chown -R workeruser:collabpulse /app
+
+USER workeruser
+
+ENV DOTNET_ENVIRONMENT=Production
+
+ENTRYPOINT ["dotnet", "CollabPulse.Infrastructure.dll", "--worker"]
