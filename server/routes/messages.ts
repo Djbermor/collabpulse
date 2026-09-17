@@ -517,6 +517,7 @@ messagesRouter.post('/:id/reactions', authenticate, requirePermission('reactions
   const existingIdx = msg.reactions.findIndex(r => r.messageId === id && r.userId === user.id && r.emoji === emoji);
 
   let action: 'added' | 'removed' = 'added';
+  let createdReaction: MessageReaction | null = null;
   if (existingIdx !== -1) {
     // Toggle off
     msg.reactions.splice(existingIdx, 1);
@@ -532,6 +533,7 @@ messagesRouter.post('/:id/reactions', authenticate, requirePermission('reactions
       emoji,
       createdAt: new Date().toISOString()
     };
+    createdReaction = newReaction;
     msg.reactions.push(newReaction);
     await db.persistReaction(newReaction);
   }
@@ -542,7 +544,7 @@ messagesRouter.post('/:id/reactions', authenticate, requirePermission('reactions
   const altEventName = action === 'added' ? 'MessageReactionAdded' : 'MessageReactionRemoved';
   const targetGroup = msg.channelId ? `channel:${msg.channelId}` : `conversation:${msg.conversationId}`;
   
-  const rxPayload = { messageId: id, emoji, userId: user.id, reactions: msg.reactions };
+  const rxPayload = { messageId: id, emoji, userId: user.id, reaction: createdReaction, reactions: msg.reactions };
   realtimeHub.broadcastToGroup(targetGroup, eventName, rxPayload);
   realtimeHub.broadcastToGroup(targetGroup, altEventName, rxPayload);
 
@@ -556,7 +558,13 @@ messagesRouter.post('/:id/reactions', authenticate, requirePermission('reactions
     }
   }
 
-  res.json({ success: true, action, data: msg.reactions });
+  res.json({
+    success: true,
+    action,
+    data: createdReaction ? { ...createdReaction, reactions: msg.reactions } : { emoji, reactions: msg.reactions },
+    reaction: createdReaction,
+    reactions: msg.reactions
+  });
 });
 
 // 10. Pin / Unpin message (Section 52-54)
@@ -664,4 +672,93 @@ messagesRouter.post('/typing', authenticate, (req: AuthenticatedRequest, res: Re
   }
 
   res.json({ success: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 6: IN-CALL CHAT & MESSAGING — NEW ENDPOINTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 13. Mark message as delivered (per-user delivery receipt)
+messagesRouter.post('/:id/delivered', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user!;
+  const tenantId = user.tenantId;
+
+  const msg = db.messages.find(m => m.id === id && m.tenantId === tenantId);
+  if (!msg || msg.isDeleted) {
+    return res.status(404).json({ success: false, message: 'Mensaje no encontrado' });
+  }
+
+  await db.persistMessageDelivered(id, user.id);
+
+  // Notify the original sender and all conversation members via realtime
+  const deliveredPayload = { messageId: id, userId: user.id, deliveredAt: new Date().toISOString() };
+  const targetGroup = msg.channelId ? `channel:${msg.channelId}` : `conversation:${msg.conversationId}`;
+  realtimeHub.broadcastToGroup(targetGroup, 'MessageDelivered', deliveredPayload);
+  if (msg.senderId !== user.id) {
+    realtimeHub.sendToUser(msg.senderId, 'MessageDelivered', deliveredPayload);
+  }
+
+  res.json({ success: true, data: deliveredPayload });
+});
+
+// 14. Mark message as read (per-user read receipt)
+messagesRouter.post('/:id/read', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user!;
+  const tenantId = user.tenantId;
+
+  const msg = db.messages.find(m => m.id === id && m.tenantId === tenantId);
+  if (!msg || msg.isDeleted) {
+    return res.status(404).json({ success: false, message: 'Mensaje no encontrado' });
+  }
+
+  await db.persistMessageRead(id, user.id);
+
+  // Notify the original sender that the message was read
+  const readPayload = { messageId: id, userId: user.id, readAt: new Date().toISOString() };
+  const targetGroup = msg.channelId ? `channel:${msg.channelId}` : `conversation:${msg.conversationId}`;
+  realtimeHub.broadcastToGroup(targetGroup, 'MessageRead', readPayload);
+  if (msg.senderId !== user.id) {
+    realtimeHub.sendToUser(msg.senderId, 'MessageRead', readPayload);
+  }
+
+  res.json({ success: true, data: readPayload });
+});
+
+// 15. Remove a specific reaction from a message (idempotent)
+messagesRouter.delete('/:id/reactions/:reaction', authenticate, requirePermission('reactions.remove'), async (req: AuthenticatedRequest, res: Response) => {
+  const { id, reaction: emoji } = req.params;
+  const user = req.user!;
+  const tenantId = user.tenantId;
+
+  const msg = db.messages.find(m => m.id === id && m.tenantId === tenantId);
+  if (!msg || msg.isDeleted) {
+    return res.status(404).json({ success: false, message: 'Mensaje no encontrado' });
+  }
+
+  if (!msg.reactions) msg.reactions = [];
+  const existingIdx = msg.reactions.findIndex(r => r.messageId === id && r.userId === user.id && r.emoji === emoji);
+
+  if (existingIdx !== -1) {
+    msg.reactions.splice(existingIdx, 1);
+    await db.removeReaction(id, user.id, emoji);
+  }
+  // Idempotent: if reaction didn't exist, still return 200
+
+  const rxPayload = { messageId: id, emoji, userId: user.id, reactions: msg.reactions };
+  const targetGroup = msg.channelId ? `channel:${msg.channelId}` : `conversation:${msg.conversationId}`;
+  realtimeHub.broadcastToGroup(targetGroup, 'ReactionRemoved', rxPayload);
+  realtimeHub.broadcastToGroup(targetGroup, 'MessageReactionRemoved', rxPayload);
+
+  if (msg.conversationId) {
+    const conv = db.conversations.find(c => c.id === msg.conversationId);
+    if (conv?.memberIds) {
+      for (const memberId of conv.memberIds) {
+        realtimeHub.sendToUser(memberId, 'ReactionRemoved', rxPayload);
+      }
+    }
+  }
+
+  res.json({ success: true, data: msg.reactions });
 });

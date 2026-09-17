@@ -118,6 +118,14 @@ export async function bootstrapDatabase() {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS feature_permissions (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL UNIQUE,
+          permissions JSONB NOT NULL,
+          updated_by TEXT,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS notifications (
           id TEXT PRIMARY KEY,
           tenant_id TEXT NOT NULL,
@@ -190,8 +198,100 @@ export async function bootstrapDatabase() {
         CREATE INDEX IF NOT EXISTS idx_calls_room_id ON calls(room_id);
         CREATE INDEX IF NOT EXISTS idx_call_participants_call_id ON call_participants(call_id);
         CREATE INDEX IF NOT EXISTS idx_call_history_call_id ON call_history(call_id);
+
+        -- FASE 4 & 5: GROUP CALLS / SFU MULTI-PARTICIPANT TABLES
+        CREATE TABLE IF NOT EXISTS group_calls (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          room_id TEXT NOT NULL UNIQUE,
+          title TEXT NOT NULL DEFAULT 'Conferencia Grupal',
+          creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          media_type TEXT NOT NULL DEFAULT 'video',
+          status TEXT NOT NULL DEFAULT 'active',
+          started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          ended_at TIMESTAMP WITH TIME ZONE,
+          duration_seconds INTEGER DEFAULT 0,
+          max_participants INTEGER DEFAULT 25,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS group_call_participants (
+          id TEXT PRIMARY KEY,
+          group_call_id TEXT NOT NULL REFERENCES group_calls(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          role TEXT NOT NULL DEFAULT 'participant',
+          status TEXT NOT NULL DEFAULT 'joined',
+          audio_enabled BOOLEAN NOT NULL DEFAULT true,
+          video_enabled BOOLEAN NOT NULL DEFAULT true,
+          screen_sharing_enabled BOOLEAN NOT NULL DEFAULT false,
+          connection_state TEXT NOT NULL DEFAULT 'connected',
+          joined_at TIMESTAMP WITH TIME ZONE,
+          left_at TIMESTAMP WITH TIME ZONE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS group_call_events (
+          id TEXT PRIMARY KEY,
+          group_call_id TEXT NOT NULL REFERENCES group_calls(id) ON DELETE CASCADE,
+          event_type TEXT NOT NULL,
+          user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          metadata TEXT DEFAULT '{}',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_group_calls_tenant_id ON group_calls(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_group_calls_room_id ON group_calls(room_id);
+        CREATE INDEX IF NOT EXISTS idx_group_calls_workspace_id ON group_calls(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_group_call_participants_call_id ON group_call_participants(group_call_id);
+        CREATE INDEX IF NOT EXISTS idx_group_call_participants_user_id ON group_call_participants(user_id);
+        CREATE INDEX IF NOT EXISTS idx_group_call_events_call_id ON group_call_events(group_call_id);
+
+        -- FASE 6: IN-CALL CHAT & MESSAGING TABLES & EXTENSIONS
+        ALTER TABLE conversations ADD COLUMN IF NOT EXISTS call_id TEXT;
+        ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel_id TEXT;
+        ALTER TABLE conversation_members ADD COLUMN IF NOT EXISTS last_read_message_id TEXT;
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_type TEXT NOT NULL DEFAULT 'text';
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'sent';
+        ALTER TABLE group_calls ADD COLUMN IF NOT EXISTS conversation_id TEXT;
+
+        CREATE TABLE IF NOT EXISTS message_reads (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          read_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          UNIQUE(message_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS message_deliveries (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          delivered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+          UNIQUE(message_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS message_attachments (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          file_name TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          storage_key TEXT NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversations_call_id ON conversations(call_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+        CREATE INDEX IF NOT EXISTS idx_messages_client_msg_id ON messages(client_message_id);
+        CREATE INDEX IF NOT EXISTS idx_message_reads_message_id ON message_reads(message_id);
+        CREATE INDEX IF NOT EXISTS idx_message_reads_user_id ON message_reads(user_id);
+        CREATE INDEX IF NOT EXISTS idx_message_deliveries_message_id ON message_deliveries(message_id);
+        CREATE INDEX IF NOT EXISTS idx_message_deliveries_user_id ON message_deliveries(user_id);
+        CREATE INDEX IF NOT EXISTS idx_message_attachments_msg_id ON message_attachments(message_id);
       `);
-      console.log('[Bootstrap] Organizations, notifications, task_comments, and call engine tables verified in PostgreSQL.');
+      console.log('[Bootstrap] Organizations, notifications, call engine (1:1 & Group) and Phase 6 messaging tables verified in PostgreSQL.');
     } catch (err: any) {
       console.error('[Bootstrap] Error creating extended DDL tables:', err.message);
     }

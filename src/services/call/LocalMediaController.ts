@@ -15,6 +15,13 @@ export class LocalMediaController {
   private isAudioMuted: boolean = false;
   private isVideoOff: boolean = false;
 
+  constructor() {
+    if (typeof window !== 'undefined') {
+      (window as any).__collabpulse_lmc = this;
+      (window as any).__collabpulse_localMediaController = this;
+    }
+  }
+
   /**
    * Acquire local media stream with resilient constraints.
    */
@@ -106,33 +113,45 @@ export class LocalMediaController {
   }
 
   /**
-   * Enable/Unmute camera
+   * Get active camera track
    */
-  public async enableCamera(): Promise<void> {
-    if (this.localStream) {
-      const existingTrack = this.localStream.getVideoTracks()[0];
-      if (existingTrack) {
-        existingTrack.enabled = true;
-        this.isVideoOff = false;
-        callLog('LocalMediaController: Camera enabled (existing track)');
-        return;
-      }
+  public getCameraTrack(): MediaStreamTrack | null {
+    return this.localStream ? (this.localStream.getVideoTracks()[0] || null) : null;
+  }
 
-      // If stream didn't have video track initially, acquire one
-      try {
-        const videoStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } }
-        });
-        const newTrack = videoStream.getVideoTracks()[0];
-        if (newTrack) {
-          this.localStream.addTrack(newTrack);
-          this.isVideoOff = false;
-          callLog('LocalMediaController: Camera track acquired and added to local stream');
-        }
-      } catch (err: any) {
-        callError('LocalMediaController: Failed to enable camera', err);
-        throw err;
+  /**
+   * Enable/Unmute camera. Returns the active video track.
+   */
+  public async enableCamera(): Promise<MediaStreamTrack | null> {
+    if (!this.localStream) {
+      await this.getLocalMedia({ audio: true, video: true });
+      return this.getCameraTrack();
+    }
+
+    const existingTrack = this.localStream.getVideoTracks()[0];
+    if (existingTrack) {
+      existingTrack.enabled = true;
+      this.isVideoOff = false;
+      callLog('LocalMediaController: Camera enabled (existing track)');
+      return existingTrack;
+    }
+
+    // If stream didn't have video track initially, acquire one
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+      });
+      const newTrack = videoStream.getVideoTracks()[0];
+      if (newTrack) {
+        this.localStream.addTrack(newTrack);
+        this.isVideoOff = false;
+        callLog('LocalMediaController: Camera track acquired and added to local stream');
+        return newTrack;
       }
+      return null;
+    } catch (err: any) {
+      callError('LocalMediaController: Failed to enable camera', err);
+      throw err;
     }
   }
 

@@ -21,15 +21,28 @@ import {
   User,
   Briefcase,
   UserCheck,
-  UserX
+  UserX,
+  MessageSquare,
+  Hash,
+  CheckSquare,
+  Calendar,
+  Phone,
+  Video,
+  Bookmark,
+  Bell,
+  ToggleLeft,
+  ToggleRight,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { AuditLog, UserRole } from '../../types';
+import { AuditLog, UserRole, FeaturePermissions } from '../../types';
 import { api } from '../../services/api';
 
 export const AdminView: React.FC = () => {
-  const { currentTenant, currentWorkspace, currentUser, addToast } = useApp();
-  const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'audit' | 'settings'>('stats');
+  const { currentTenant, currentWorkspace, currentUser, addToast, features, updateFeaturePermissions } = useApp();
+  const [activeTab, setActiveTab] = useState<'permissions' | 'stats' | 'users' | 'audit' | 'settings'>('permissions');
+  const [updatingFeature, setUpdatingFeature] = useState<string | null>(null);
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -38,6 +51,102 @@ export const AdminView: React.FC = () => {
   const [wsDesc, setWsDesc] = useState(currentWorkspace?.description || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  const handleToggleFeature = async (key: keyof FeaturePermissions, label: string) => {
+    const nextVal = !features[key];
+    setUpdatingFeature(key);
+    try {
+      const ok = await updateFeaturePermissions({ [key]: nextVal });
+      if (ok) {
+        addToast(`Funcionalidad "${label}" ${nextVal ? 'habilitada' : 'deshabilitada'}`, 'success');
+      } else {
+        addToast(`No se pudo actualizar el permiso de "${label}"`, 'error');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Error al guardar permiso', 'error');
+    } finally {
+      setUpdatingFeature(null);
+    }
+  };
+
+  const featureDefinitions: {
+    key: keyof FeaturePermissions;
+    name: string;
+    description: string;
+    icon: React.ComponentType<{ className?: string }>;
+    category: 'core' | 'extended';
+  }[] = [
+    {
+      key: 'messaging',
+      name: 'Mensajería',
+      description: 'Conversaciones directas 1 a 1 y mensajería en tiempo real.',
+      icon: MessageSquare,
+      category: 'core'
+    },
+    {
+      key: 'channels',
+      name: 'Canales',
+      description: 'Creación, consulta y mensajería en canales públicos y privados.',
+      icon: Hash,
+      category: 'core'
+    },
+    {
+      key: 'groups',
+      name: 'Grupos',
+      description: 'Creación, asignación de miembros y mensajería de grupos colaborativos.',
+      icon: Users,
+      category: 'core'
+    },
+    {
+      key: 'tasks',
+      name: 'Tablero de Tareas',
+      description: 'Tablero Kanban corporativo, asignaciones y estados de trabajo.',
+      icon: CheckSquare,
+      category: 'extended'
+    },
+    {
+      key: 'calendar',
+      name: 'Calendario',
+      description: 'Eventos corporativos, agendamiento y visualización de reuniones.',
+      icon: Calendar,
+      category: 'extended'
+    },
+    {
+      key: 'calls',
+      name: 'Llamadas',
+      description: 'Llamadas de voz 1 a 1 y señalización SSE en tiempo real.',
+      icon: Phone,
+      category: 'extended'
+    },
+    {
+      key: 'videoCalls',
+      name: 'Videollamadas',
+      description: 'Videollamadas HD, salas WebRTC/LiveKit SFU y pantalla compartida.',
+      icon: Video,
+      category: 'extended'
+    },
+    {
+      key: 'files',
+      name: 'Archivos & Adjuntos',
+      description: 'Gestor documental empresarial y almacenamiento central de archivos.',
+      icon: FileText,
+      category: 'extended'
+    },
+    {
+      key: 'saved',
+      name: 'Guardados',
+      description: 'Marcado rápido de mensajes y notas importantes para consulta rápida.',
+      icon: Bookmark,
+      category: 'extended'
+    },
+    {
+      key: 'activity',
+      name: 'Actividad',
+      description: 'Centro de notificaciones y registro cronológico de actividad de equipo.',
+      icon: Bell,
+      category: 'extended'
+    }
+  ];
 
   // Modals for CRUD
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -246,6 +355,15 @@ export const AdminView: React.FC = () => {
 
         {/* Tab Buttons */}
         <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+          <button
+            onClick={() => setActiveTab('permissions')}
+            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'permissions' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Permisos de funcionalidades</span>
+          </button>
           <button
             onClick={() => setActiveTab('stats')}
             className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
@@ -574,6 +692,121 @@ export const AdminView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        )}
+
+        {/* Tab: Permisos de funcionalidades */}
+        {activeTab === 'permissions' && (
+          <div className="max-w-4xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-slate-950/80 border border-slate-800 shadow-sm">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-indigo-400" />
+                  <h3 className="font-bold text-slate-100 text-sm">Permisos de funcionalidades</h3>
+                </div>
+                <p className="text-slate-400 mt-1 text-xs">
+                  Gestiona el acceso y disponibilidad de módulos para todos los usuarios de la organización.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <span className="text-[11px] text-slate-400">Tenant:</span>
+                <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-indigo-950/60 border border-indigo-800/40 text-indigo-300 font-semibold">
+                  {currentTenant?.id || currentUser?.tenantId}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Módulos del Sistema ({featureDefinitions.length})
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  Los cambios se aplican y sincronizan en tiempo real
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                {featureDefinitions.map(f => {
+                  const Icon = f.icon;
+                  const isEnabled = !!features[f.key];
+                  const isUpdating = updatingFeature === f.key;
+
+                  return (
+                    <div
+                      key={f.key}
+                      id={`feature-card-${f.key}`}
+                      className={`p-4 rounded-xl border transition-all duration-150 flex items-center justify-between gap-4 ${
+                        isEnabled
+                          ? 'bg-slate-950/70 border-slate-800/90 shadow-xs'
+                          : 'bg-slate-950/40 border-slate-800/40 opacity-75'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                            isEnabled
+                              ? 'bg-indigo-600/15 border-indigo-500/30 text-indigo-400'
+                              : 'bg-slate-900 border-slate-800 text-slate-500'
+                          }`}
+                        >
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-200 text-xs">{f.name}</span>
+                            {f.category === 'core' && (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-950/70 border border-indigo-800/50 text-indigo-300">
+                                Core MVP
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate max-w-md mt-0.5">
+                            {f.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 shrink-0">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+                            isEnabled
+                              ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-400'
+                              : 'bg-slate-900 border-slate-800 text-slate-400'
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              isEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                            }`}
+                          />
+                          <span>{isEnabled ? 'Habilitada' : 'Deshabilitada'}</span>
+                        </span>
+
+                        <button
+                          type="button"
+                          id={`toggle-${f.key}`}
+                          onClick={() => handleToggleFeature(f.key, f.name)}
+                          disabled={isUpdating}
+                          aria-pressed={isEnabled}
+                          title={`${isEnabled ? 'Deshabilitar' : 'Habilitar'} ${f.name}`}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                            isEnabled ? 'bg-indigo-600' : 'bg-slate-800 hover:bg-slate-700'
+                          } ${isUpdating ? 'opacity-50 cursor-wait' : ''}`}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              isEnabled ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </div>

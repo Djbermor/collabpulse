@@ -1,4 +1,4 @@
-import { ApiResponse, UserRole, UserStatus } from '../types';
+import { ApiResponse, UserRole, UserStatus, FeaturePermissions } from '../types';
 
 class ApiClient {
   private tenantId: string = '';
@@ -450,6 +450,19 @@ class ApiClient {
     return this.request(`/channels/${id}/members`);
   }
 
+  public addChannelMember(id: string, userId: string) {
+    return this.request(`/channels/${id}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId })
+    });
+  }
+
+  public removeChannelMember(id: string, userId: string) {
+    return this.request(`/channels/${id}/members/${userId}`, {
+      method: 'DELETE'
+    });
+  }
+
   // --- Conversations (DMs) ---
   public getConversations() {
     return this.request('/conversations');
@@ -858,6 +871,17 @@ class ApiClient {
     return this.request('/admin/settings', {
       method: 'PUT',
       body: JSON.stringify(payload)
+    });
+  }
+
+  public getFeaturePermissions() {
+    return this.request<FeaturePermissions>('/features');
+  }
+
+  public updateFeaturePermissions(permissions: Partial<FeaturePermissions>) {
+    return this.request<FeaturePermissions>('/admin/features', {
+      method: 'PUT',
+      body: JSON.stringify(permissions)
     });
   }
 }

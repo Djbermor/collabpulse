@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Phone, Video, Users, Hash, Plus, ArrowRight, Sparkles, Shield, UserCheck, Search } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { useCall } from '../../context/CallContext';
 import { api } from '../../services/api';
 import { User, Channel } from '../../types';
 
@@ -8,10 +9,10 @@ export const CallsView: React.FC = () => {
   const {
     currentUser,
     channels,
-    startCall,
     startOrJoinMeeting,
     addToast
   } = useApp();
+  const { startCall, startGroupCall, joinGroupCall } = useCall();
 
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -35,16 +36,26 @@ export const CallsView: React.FC = () => {
     loadDirectory();
   }, [currentUser?.id]);
 
-  const handleStartInstantMeeting = (isVideo: boolean) => {
-    const code = 'sala-' + Math.random().toString(36).substring(2, 8);
-    startOrJoinMeeting(code, `Reunión Instantánea (${isVideo ? 'Video' : 'Voz'})`, isVideo ? 'video' : 'audio');
+  const handleStartInstantMeeting = async (isVideo: boolean) => {
+    try {
+      await startGroupCall({
+        title: `Reunión Grupal (${isVideo ? 'Video' : 'Voz'})`,
+        mediaType: isVideo ? 'video' : 'audio'
+      });
+    } catch (err) {
+      console.error('Error starting group call:', err);
+    }
   };
 
-  const handleJoinByCode = (e: React.FormEvent) => {
+  const handleJoinByCode = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCode = customRoomCode.trim();
     if (!cleanCode) return;
-    startOrJoinMeeting(cleanCode, `Sala ${cleanCode}`, 'video');
+    try {
+      await joinGroupCall(cleanCode);
+    } catch (err) {
+      console.error('Error joining group call:', err);
+    }
   };
 
   const filteredUsers = users.filter(u => {
@@ -184,6 +195,7 @@ export const CallsView: React.FC = () => {
                         onClick={() =>
                           startCall({
                             targetUserId: user.id,
+                            callType: 'audio',
                             isVideo: false,
                             title: name
                           })
@@ -198,6 +210,7 @@ export const CallsView: React.FC = () => {
                         onClick={() =>
                           startCall({
                             targetUserId: user.id,
+                            callType: 'video',
                             isVideo: true,
                             title: name
                           })

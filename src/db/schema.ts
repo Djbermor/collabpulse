@@ -164,8 +164,11 @@ export const conversations = pgTable('conversations', {
   id: text('id').primaryKey(),
   workspaceId: text('workspace_id').references(() => workspaces.id).notNull(),
   tenantId: text('tenant_id').references(() => tenants.id).notNull(),
-  type: text('type').default('Direct').notNull(),
+  type: text('type').default('Direct').notNull(), // 'Direct', 'Group', 'call'
   name: text('name'),
+  // FASE 6: Link to a call session (1:1 or group)
+  callId: text('call_id'),
+  channelId: text('channel_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -177,6 +180,7 @@ export const conversationMembers = pgTable('conversation_members', {
   userId: text('user_id').references(() => users.id).notNull(),
   workspaceId: text('workspace_id').references(() => workspaces.id).notNull(),
   lastReadAt: timestamp('last_read_at', { withTimezone: true }),
+  lastReadMessageId: text('last_read_message_id'), // FASE 6: tracks per-user read watermark
   joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -193,6 +197,9 @@ export const messages = pgTable('messages', {
   content: text('content').notNull(),
   richContent: text('rich_content'),
   attachments: text('attachments'),
+  // FASE 6: message type and delivery status
+  messageType: text('message_type').default('text').notNull(), // 'text', 'system', 'file', 'image', 'audio'
+  status: text('status').default('sent').notNull(),            // 'sending', 'sent', 'delivered', 'read', 'failed'
   isEdited: boolean('is_edited').default(false).notNull(),
   isPinned: boolean('is_pinned').default(false).notNull(),
   replyCount: integer('reply_count').default(0).notNull(),
@@ -200,6 +207,33 @@ export const messages = pgTable('messages', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
+});
+
+// FASE 6: MESSAGE READS (per-user read receipts)
+export const messageReads = pgTable('message_reads', {
+  id: text('id').primaryKey(),
+  messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  readAt: timestamp('read_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// FASE 6: MESSAGE DELIVERIES (per-user delivery receipts)
+export const messageDeliveries = pgTable('message_deliveries', {
+  id: text('id').primaryKey(),
+  messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// FASE 6: MESSAGE ATTACHMENTS (structured attachment metadata)
+export const messageAttachments = pgTable('message_attachments', {
+  id: text('id').primaryKey(),
+  messageId: text('message_id').references(() => messages.id, { onDelete: 'cascade' }).notNull(),
+  fileName: text('file_name').notNull(),
+  mimeType: text('mime_type').notNull(),
+  size: integer('size').notNull(),
+  storageKey: text('storage_key').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 // 14. MESSAGE REACTIONS
@@ -390,6 +424,15 @@ export const organizationSettings = pgTable('organization_settings', {
   requireApproval: boolean('require_approval').default(true).notNull(),
   allowExternalGuests: boolean('allow_external_guests').default(false).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+// 25b. FEATURE PERMISSIONS (Feature Flags for Modular MVP Governance)
+export const featurePermissions = pgTable('feature_permissions', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id').notNull().unique(),
+  permissions: text('permissions').notNull(), // JSON string of FeaturePermissions
+  updatedBy: text('updated_by'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

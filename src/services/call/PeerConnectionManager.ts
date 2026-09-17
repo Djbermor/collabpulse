@@ -24,6 +24,14 @@ export class PeerConnectionManager {
   private onRemoteStreamCallback: RemoteStreamCallback | null = null;
   private onConnectionStateCallback: ConnectionStateCallback | null = null;
 
+  constructor() {
+    if (typeof window !== 'undefined') {
+      (window as any).__collabpulse_pcm = this;
+      (window as any).__collabpulse_peers = this.peers;
+      (window as any).__collabpulse_peerConnectionManager = this;
+    }
+  }
+
   public setCallbacks(
     onRemoteStream: RemoteStreamCallback,
     onConnectionState: ConnectionStateCallback
@@ -316,6 +324,106 @@ export class PeerConnectionManager {
    */
   public getRemoteStream(remoteUserId: string): MediaStream | undefined {
     return this.peers.get(remoteUserId)?.remoteStream;
+  }
+
+  /**
+   * Replace or add video track on active peer connections.
+   * Can target a specific peer (e.g. active call) or all active peers.
+   * Used for screen sharing and audio-to-video transitions without closing connection.
+   */
+  public async replaceVideoTrack(
+    newTrack: MediaStreamTrack | null,
+    callId?: string,
+    roomId?: string,
+    localStream?: MediaStream | null,
+    targetUserId?: string
+  ): Promise<void> {
+    callLog(`PeerConnectionManager: replaceVideoTrack requested`, {
+      newTrackId: newTrack?.id,
+      kind: newTrack?.kind,
+      targetUserId,
+      activePeers: this.peers.size
+    });
+
+    for (const [remoteUserId, context] of this.peers.entries()) {
+      if (targetUserId && remoteUserId !== targetUserId) continue;
+      if (context.pc.signalingState === 'closed') continue;
+
+      try {
+        // Find existing video sender
+        const videoSender = context.pc.getSenders().find(s => s.track && s.track.kind === 'video')
+          || context.pc.getSenders().find(s => {
+            const transceivers = context.pc.getTransceivers ? context.pc.getTransceivers() : [];
+            const t = transceivers.find(tr => tr.sender === s);
+            return t?.receiver?.track?.kind === 'video' || t?.mid?.includes('video');
+          });
+
+        if (videoSender) {
+          callLog(`PeerConnectionManager: Found video sender for ${remoteUserId}. Executing replaceTrack...`);
+          await videoSender.replaceTrack(newTrack);
+          callLog(`PeerConnectionManager: replaceTrack succeeded for ${remoteUserId}`);
+        } else if (newTrack) {
+          // No video sender found (e.g. call started as audio-only). Add track and trigger renegotiation.
+          callLog(`PeerConnectionManager: No video sender for ${remoteUserId}. Adding new video track and renegotiating...`);
+          const streamToAttach = localStream || new MediaStream([newTrack]);
+          context.pc.addTrack(newTrack, streamToAttach);
+
+          // Renegotiate offer
+          const offer = await context.pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true
+          });
+          await context.pc.setLocalDescription(offer);
+
+          if (callId && roomId) {
+            await signalingClient.sendOffer(callId, roomId, remoteUserId, offer);
+            callLog(`PeerConnectionManager: Dispatched renegotiation offer for audio->video to ${remoteUserId}`);
+          }
+        }
+      } catch (err: any) {
+        callError(`PeerConnectionManager: Failed to replace/add video track for ${remoteUserId}`, err);
+      }
+    }
+  }
+
+  /**
+   * Enable or disable audio/video transmission to a specific peer.
+   * Used when putting a call on HOLD or RESUMING a call.
+   */
+  public setPeerMediaEnabled(remoteUserId: string, audioEnabled: boolean, videoEnabled: boolean): void {
+    const context = this.peers.get(remoteUserId);
+    if (!context || context.pc.signalingState === 'closed') return;
+
+    callLog(`PeerConnectionManager: setPeerMediaEnabled for ${remoteUserId}`, { audioEnabled, videoEnabled });
+
+    context.pc.getSenders().forEach(sender => {
+      if (sender.track) {
+        if (sender.track.kind === 'audio') {
+          sender.track.enabled = audioEnabled;
+        } else if (sender.track.kind === 'video') {
+          sender.track.enabled = videoEnabled;
+        }
+      }
+    });
+  }
+
+  /**
+   * Close a specific peer connection without affecting other active or held peers.
+   */
+  public closePeer(remoteUserId: string): void {
+    const context = this.peers.get(remoteUserId);
+    if (!context) return;
+
+    callLog(`PeerConnectionManager: Closing peer connection for single peer: ${remoteUserId}`);
+    if (context.iceRestartTimeout) {
+      clearTimeout(context.iceRestartTimeout);
+    }
+    try {
+      context.pc.close();
+    } catch (e) {
+      // ignore
+    }
+    this.peers.delete(remoteUserId);
   }
 
   /**

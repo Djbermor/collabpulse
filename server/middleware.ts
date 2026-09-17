@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { db, ROLE_PERMISSIONS } from './db';
 import { verifyJwt, checkRateLimit } from './security';
-import { User, Workspace, WorkspaceMember } from '../src/types';
+import { User, Workspace, WorkspaceMember, FeaturePermissions } from '../src/types';
 import { adminAuth } from '../src/lib/firebase-admin';
 
 // Extended Express Request interface for authenticated context
@@ -278,3 +278,25 @@ export function assertTenantMatch(req: AuthenticatedRequest, entityTenantId: str
     throw error;
   }
 }
+
+/**
+ * Feature Guard Middleware (Layer 5: API-level blocking for modular MVP governance)
+ * Rejects requests to disabled features with 403 FEATURE_DISABLED.
+ */
+export function requireFeature(feature: keyof FeaturePermissions) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const authReq = req as AuthenticatedRequest;
+    const tenantId = authReq.user?.tenantId || (req.headers['x-tenant-id'] as string) || (req.query.tenantId as string) || 'tenant-mu36yjdt';
+    const permissions = db.getFeaturePermissions(tenantId);
+    if (!permissions[feature]) {
+      return res.status(403).json({
+        success: false,
+        message: `Funcionalidad '${feature}' no disponible en esta versión.`,
+        code: 'FEATURE_DISABLED',
+        feature
+      });
+    }
+    next();
+  };
+}
+

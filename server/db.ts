@@ -32,7 +32,9 @@ import {
   OrganizationSettings,
   CallSession,
   CallParticipant,
-  CallHistoryRecord
+  CallHistoryRecord,
+  FeaturePermissions,
+  DEFAULT_MVP_FEATURES
 } from '../src/types';
 import { hashPassword, hashToken, normalizeEmail, normalizeUserName } from './security';
 import { db as pgDb, pool } from '../src/db/index.ts';
@@ -57,7 +59,10 @@ import {
   userSessions as pgUserSessions,
   calls as pgCalls,
   callParticipants as pgCallParticipants,
-  callHistory as pgCallHistory
+  callHistory as pgCallHistory,
+  messageReads as pgMessageReads,
+  messageDeliveries as pgMessageDeliveries,
+  messageAttachments as pgMessageAttachments
 } from '../src/db/schema.ts';
 import { eq, and } from 'drizzle-orm';
 import { bootstrapDatabase } from './bootstrap.ts';
@@ -145,6 +150,7 @@ class CollabDatabase {
   public auditLogs: AuditLog[] = [];
   public invitations: WorkspaceInvitation[] = [];
   public typingUsers: Map<string, { userId: string; userName: string; channelId?: string; conversationId?: string; timestamp: number }> = new Map();
+  public featurePermissions: Map<string, FeaturePermissions> = new Map();
 
   public isPostgresConnected: boolean = false;
 
@@ -613,11 +619,60 @@ class CollabDatabase {
         console.warn('[CollabDatabase] Call Engine tables load warning:', callErr.message);
       }
 
+      // 20. Feature Permissions from PostgreSQL
+      try {
+        const fpRes = await pool.query('SELECT tenant_id, permissions FROM feature_permissions');
+        this.featurePermissions.clear();
+        for (const row of fpRes.rows) {
+          const perms = typeof row.permissions === 'string' ? JSON.parse(row.permissions) : row.permissions;
+          this.featurePermissions.set(row.tenant_id, perms);
+        }
+      } catch (fpErr: any) {
+        console.warn('[CollabDatabase] Feature permissions load warning:', fpErr.message);
+      }
+
       this.isPostgresConnected = true;
       console.log(`[CollabDatabase] Synced successfully from PostgreSQL (${this.organizations.length} orgs, ${this.users.length} users, ${this.channels.length} channels, ${this.messages.length} messages, ${this.notifications.length} notifications, ${this.calls.length} calls).`);
     } catch (err) {
       console.error('[CollabDatabase] Failed to sync from PostgreSQL:', err);
     }
+  }
+
+  // Feature Permissions & Feature Flags Management
+  public getFeaturePermissions(tenantId: string): FeaturePermissions {
+    const existing = this.featurePermissions.get(tenantId);
+    if (existing) return { ...existing };
+    return { ...DEFAULT_MVP_FEATURES };
+  }
+
+  public async setFeaturePermissions(
+    tenantId: string,
+    permissions: Partial<FeaturePermissions>,
+    updatedBy?: string
+  ): Promise<FeaturePermissions> {
+    const current = this.getFeaturePermissions(tenantId);
+    const updated: FeaturePermissions = { ...current, ...permissions };
+    this.featurePermissions.set(tenantId, updated);
+
+    try {
+      await pool.query(`
+        INSERT INTO feature_permissions (id, tenant_id, permissions, updated_by, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (tenant_id) DO UPDATE 
+        SET permissions = EXCLUDED.permissions,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = NOW();
+      `, [
+        `fp-${tenantId}`,
+        tenantId,
+        JSON.stringify(updated),
+        updatedBy || null
+      ]);
+    } catch (err: any) {
+      console.error('[CollabDatabase] Failed to persist feature_permissions to PostgreSQL:', err);
+    }
+
+    return updated;
   }
 
   // Multi-tenant audit helper
@@ -959,7 +1014,7 @@ class CollabDatabase {
   }
 
 
-  public async persistMessage(msg: Message) {
+  public async persistMessage(msg: Message, clientMessageId?: string) {
     try {
       const wsId = msg.workspaceId || this.workspaces.find(w => w.tenantId === msg.tenantId)?.id || this.workspaces[0]?.id || '';
       await pgDb.insert(pgMessages).values({
@@ -975,6 +1030,7 @@ class CollabDatabase {
         isEdited: !!msg.isEdited,
         isPinned: !!msg.isPinned,
         replyCount: msg.repliesCount || 0,
+        clientMessageId: clientMessageId || (msg as any).clientMessageId || null,
         createdAt: new Date(msg.createdAt),
         updatedAt: new Date(msg.updatedAt),
         deletedAt: msg.isDeleted ? new Date() : null
@@ -1534,6 +1590,223 @@ class CollabDatabase {
       await pool.query('DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2', [orgId, userId]);
     } catch (error) {
       console.error('[PostgreSQL] removeOrganizationMember error:', error);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FASE 6: IN-CALL CHAT & MESSAGING — PERSISTENCE METHODS
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Record that a specific user has read a message.
+   * Uses INSERT ... ON CONFLICT DO NOTHING for idempotency.
+   */
+  public async persistMessageRead(messageId: string, userId: string): Promise<void> {
+    try {
+      await pool.query(
+        `INSERT INTO message_reads (id, message_id, user_id, read_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [`mr-${messageId}-${userId}`, messageId, userId]
+      );
+    } catch (error) {
+      console.error('[PostgreSQL] persistMessageRead error:', error);
+    }
+  }
+
+  /**
+   * Record that a specific message has been delivered to a user.
+   * Uses INSERT ... ON CONFLICT DO NOTHING for idempotency.
+   */
+  public async persistMessageDelivered(messageId: string, userId: string): Promise<void> {
+    try {
+      await pool.query(
+        `INSERT INTO message_deliveries (id, message_id, user_id, delivered_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [`md-${messageId}-${userId}`, messageId, userId]
+      );
+    } catch (error) {
+      console.error('[PostgreSQL] persistMessageDelivered error:', error);
+    }
+  }
+
+  /**
+   * Find or create a conversation associated with a call.
+   * - For 1:1 calls: finds existing direct conversation between caller and callee, or creates one.
+   * - For group calls: creates a conversation of type 'call' and adds participants.
+   * Idempotent: safe to call multiple times for the same callId.
+   */
+  public async findOrCreateCallConversation(params: {
+    callId: string;
+    tenantId: string;
+    workspaceId: string;
+    memberIds: string[];
+    title?: string;
+    type?: 'call' | 'direct' | 'group';
+  }): Promise<{ id: string; isNew: boolean }> {
+    const { callId, tenantId, workspaceId, memberIds, title, type = 'call' } = params;
+
+    // Check if this call already has a linked conversation
+    const existingByCall = await pool.query(
+      `SELECT id FROM conversations WHERE call_id = $1 AND tenant_id = $2 LIMIT 1`,
+      [callId, tenantId]
+    );
+    if (existingByCall.rows.length > 0) {
+      return { id: existingByCall.rows[0].id, isNew: false };
+    }
+
+    // For 1:1 direct calls — check if a direct conversation between the two users already exists
+    if (type === 'direct' && memberIds.length === 2) {
+      const [uA, uB] = memberIds;
+      const existingDirect = this.conversations.find(c =>
+        c.tenantId === tenantId &&
+        !c.isGroup &&
+        c.memberIds.length === 2 &&
+        c.memberIds.includes(uA) &&
+        c.memberIds.includes(uB)
+      );
+      if (existingDirect) {
+        // Link this call to the existing conversation
+        await pool.query(
+          `UPDATE conversations SET call_id = $1, updated_at = NOW() WHERE id = $2`,
+          [callId, existingDirect.id]
+        );
+        return { id: existingDirect.id, isNew: false };
+      }
+    }
+
+    // Create a new conversation linked to this call
+    const convId = `conv-call-${callId}`;
+    const now = new Date();
+
+    await pool.query(
+      `INSERT INTO conversations (id, tenant_id, workspace_id, type, name, call_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+       ON CONFLICT (id) DO NOTHING`,
+      [convId, tenantId, workspaceId, type === 'direct' ? 'Direct' : 'call', title || null, callId, now]
+    );
+
+    // Add all members
+    for (const userId of memberIds) {
+      await pool.query(
+        `INSERT INTO conversation_members (id, conversation_id, user_id, workspace_id, joined_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING`,
+        [`cm-${convId}-${userId}`, convId, userId, workspaceId, now]
+      );
+    }
+
+    // Sync into in-memory store
+    const inMemory = {
+      id: convId,
+      tenantId,
+      workspaceId,
+      isGroup: type !== 'direct',
+      name: title,
+      memberIds,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      unreadCount: 0
+    };
+    if (!this.conversations.some(c => c.id === convId)) {
+      this.conversations.push(inMemory);
+    }
+    for (const userId of memberIds) {
+      if (!this.conversationMembers.some(cm => cm.conversationId === convId && cm.userId === userId)) {
+        this.conversationMembers.push({
+          id: `cm-${convId}-${userId}`,
+          conversationId: convId,
+          userId,
+          joinedAt: now.toISOString()
+        });
+      }
+    }
+
+    return { id: convId, isNew: true };
+  }
+
+  /**
+   * Update a conversation's call_id association and update in-memory cache.
+   */
+  public async linkConversationToCall(conversationId: string, callId: string): Promise<void> {
+    try {
+      await pool.query(
+        `UPDATE conversations SET call_id = $1, updated_at = NOW() WHERE id = $2`,
+        [callId, conversationId]
+      );
+    } catch (error) {
+      console.error('[PostgreSQL] linkConversationToCall error:', error);
+    }
+  }
+
+  /**
+   * Add a participant to an existing call conversation.
+   */
+  public async addMemberToCallConversation(conversationId: string, userId: string, workspaceId: string): Promise<void> {
+    try {
+      const conv = this.conversations.find(c => c.id === conversationId);
+      if (conv && !conv.memberIds.includes(userId)) {
+        conv.memberIds.push(userId);
+      }
+      await pool.query(
+        `INSERT INTO conversation_members (id, conversation_id, user_id, workspace_id, joined_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [`cm-${conversationId}-${userId}`, conversationId, userId, workspaceId]
+      );
+    } catch (error) {
+      console.error('[PostgreSQL] addMemberToCallConversation error:', error);
+    }
+  }
+
+  /**
+   * Persist a system message (e.g. "X joined the call", "Call ended") to a conversation.
+   */
+  public async persistSystemMessage(params: {
+    conversationId: string;
+    tenantId: string;
+    workspaceId: string;
+    content: string;
+    userId?: string;
+  }): Promise<string> {
+    const id = `sysmsg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    try {
+      let authorId = params.userId;
+      if (!authorId) {
+        const conv = this.conversations.find(c => c.id === params.conversationId);
+        authorId = conv?.memberIds?.[0] || this.users.find(u => u.tenantId === params.tenantId)?.id || this.users[0]?.id;
+      }
+      if (!authorId) {
+        const uRes = await pool.query('SELECT id FROM users LIMIT 1');
+        authorId = uRes.rows[0]?.id;
+      }
+      if (authorId) {
+        await pool.query(
+          `INSERT INTO messages (id, workspace_id, tenant_id, conversation_id, user_id, content, message_type, status, is_edited, is_pinned, reply_count, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, 'system', 'sent', false, false, 0, NOW(), NOW())`,
+          [id, params.workspaceId, params.tenantId, params.conversationId, authorId, params.content]
+        );
+      }
+    } catch (error) {
+      console.error('[PostgreSQL] persistSystemMessage error:', error);
+    }
+    return id;
+  }
+
+  /**
+   * Check idempotency: return existing message ID if client_message_id was already persisted.
+   */
+  public async findMessageByClientId(clientMessageId: string, tenantId: string): Promise<string | null> {
+    try {
+      const res = await pool.query(
+        `SELECT id FROM messages WHERE client_message_id = $1 AND tenant_id = $2 LIMIT 1`,
+        [clientMessageId, tenantId]
+      );
+      return res.rows.length > 0 ? res.rows[0].id : null;
+    } catch (error) {
+      console.error('[PostgreSQL] findMessageByClientId error:', error);
+      return null;
     }
   }
 }

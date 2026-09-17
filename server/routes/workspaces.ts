@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { db, ROLE_PERMISSIONS } from '../db';
+import { pool } from '../../src/db/index.ts';
 import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware';
 import { generateSecureToken, hashToken, normalizeEmail, sanitizeText } from '../security';
 import { Workspace, Channel, WorkspaceMember, WorkspaceInvitation } from '../../src/types';
@@ -29,14 +30,14 @@ workspacesRouter.get('/', authenticate, (req: AuthenticatedRequest, res: Respons
 });
 
 // Create new workspace
-workspacesRouter.post('/', authenticate, (req: AuthenticatedRequest, res: Response) => {
+workspacesRouter.post('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   const { name, description, timeZone = 'Europe/Madrid', logoUrl } = req.body;
 
   if (!name || name.trim().length === 0) {
     return res.status(400).json({ success: false, message: 'El nombre del workspace es requerido', code: 'INVALID_NAME' });
   }
 
-  const cleanName = sanitizeText(name);
+  const cleanName = sanitizeText(name.trim());
   let baseSlug = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   if (!baseSlug) baseSlug = `workspace-${Date.now()}`;
 
@@ -63,7 +64,7 @@ workspacesRouter.post('/', authenticate, (req: AuthenticatedRequest, res: Respon
   };
 
   db.workspaces.push(newWorkspace);
-  db.persistWorkspace(newWorkspace);
+  await db.persistWorkspace(newWorkspace);
 
   // Section 8: Add creator as Owner member of this workspace with default roles available
   const member: WorkspaceMember = {
@@ -76,7 +77,7 @@ workspacesRouter.post('/', authenticate, (req: AuthenticatedRequest, res: Respon
     joinedAt: new Date().toISOString()
   };
   db.workspaceMembers.push(member);
-  db.persistWorkspaceMember(member);
+  await db.persistWorkspaceMember(member);
 
   // Section 7: Default Channel (#general) created automatically, creator becomes member
   const defaultChannel: Channel = {
@@ -99,7 +100,7 @@ workspacesRouter.post('/', authenticate, (req: AuthenticatedRequest, res: Respon
     unreadCount: 0
   };
   db.channels.push(defaultChannel);
-  db.persistChannel(defaultChannel);
+  await db.persistChannel(defaultChannel);
   db.channelMembers.push({
     id: `cm-${Date.now()}`,
     channelId: defaultChannel.id,
@@ -182,11 +183,56 @@ workspacesRouter.get('/members', authenticate, (req: AuthenticatedRequest, res: 
 });
 
 // List or search users in tenant for DM starting or collaborator lookup
-workspacesRouter.get('/users', authenticate, (req: AuthenticatedRequest, res: Response) => {
+workspacesRouter.get('/users', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const rawQ = (req.query.q as string || req.query.search as string || '').trim();
   const norm = (s: string) => (s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
   const q = norm(rawQ);
+
+  try {
+    const dbRes = await pool.query(
+      'SELECT id, user_name as "userName", display_name as "displayName", first_name as "firstName", last_name as "lastName", email, avatar_url as "avatarUrl", job_title as "jobTitle", role, status, custom_status as "customStatus", last_seen_at as "lastSeenAt" FROM users WHERE tenant_id = $1 AND (account_status = $2 OR account_status IS NULL)',
+      [tenantId, 'Active']
+    );
+    if (dbRes.rows.length > 0) {
+      for (const row of dbRes.rows) {
+        const existing = db.users.find(u => u.id === row.id);
+        if (existing) {
+          existing.tenantId = tenantId;
+          existing.displayName = row.displayName || existing.displayName;
+          existing.avatarUrl = row.avatarUrl || existing.avatarUrl;
+        } else {
+          db.users.push({
+            id: row.id,
+            tenantId,
+            email: row.email,
+            normalizedEmail: (row.email || '').toLowerCase(),
+            userName: row.userName,
+            normalizedUserName: (row.userName || '').toLowerCase(),
+            firstName: row.firstName || '',
+            lastName: row.lastName || '',
+            displayName: row.displayName || row.userName,
+            passwordHash: '',
+            avatarUrl: row.avatarUrl || '',
+            jobTitle: row.jobTitle || '',
+            role: row.role || 'Member',
+            status: row.status || 'Active',
+            customStatus: row.customStatus || '',
+            accountStatus: 'Active',
+            isActive: true,
+            emailVerified: true,
+            failedLoginAttempts: 0,
+            timeZone: 'UTC',
+            lastSeenAt: row.lastSeenAt ? new Date(row.lastSeenAt).toISOString() : undefined,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Workspaces] DB lookup fallback warning:', err.message);
+  }
 
   let matched = db.users.filter(u => u.tenantId === tenantId && u.accountStatus === 'Active');
 

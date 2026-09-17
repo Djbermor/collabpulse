@@ -29,10 +29,12 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { useCall } from '../../context/CallContext';
 import { Message, MessageAttachment, SavedItem } from '../../types';
 import { api } from '../../services/api';
 import { signalR } from '../../services/signalr';
 import { ConversationSettingsModal } from './ConversationSettingsModal';
+import { ChannelMembersModal } from '../modals/ChannelMembersModal';
 
 export const ChatArea: React.FC = () => {
 
@@ -43,7 +45,6 @@ export const ChatArea: React.FC = () => {
     currentUser,
     openThread,
     startOrJoinMeeting,
-    startCall,
     setIsPinnedOpen,
     setIsSearchOpen,
     typingText,
@@ -54,10 +55,12 @@ export const ChatArea: React.FC = () => {
     addToast,
     channels,
     selectChannel,
-    setIsStartDmOpen
+    setIsStartDmOpen,
+    features
   } = useApp();
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const { startCall } = useCall();
   const [inputText, setInputText] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
@@ -65,6 +68,7 @@ export const ChatArea: React.FC = () => {
   const [pinnedCount, setPinnedCount] = useState<number>(0);
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
   const [isConvSettingsOpen, setIsConvSettingsOpen] = useState<boolean>(false);
+  const [isChannelMembersOpen, setIsChannelMembersOpen] = useState<boolean>(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -489,12 +493,14 @@ export const ChatArea: React.FC = () => {
         startCall({
           targetUserId: otherUser.id,
           conversationId,
+          callType: isVideo ? 'video' : 'audio',
           isVideo,
           title: otherUser.displayName || otherUser.firstName || title
         });
       } else {
         startCall({
           conversationId,
+          callType: isVideo ? 'video' : 'audio',
           isVideo,
           title: title || 'Grupo'
         });
@@ -502,6 +508,7 @@ export const ChatArea: React.FC = () => {
     } else if (activeView === 'channel' && currentChannel?.id) {
       startCall({
         channelId: currentChannel.id,
+        callType: isVideo ? 'video' : 'audio',
         isVideo,
         title: `#${currentChannel.name}`
       });
@@ -555,6 +562,18 @@ export const ChatArea: React.FC = () => {
             <span className="hidden sm:inline">Fijados ({pinnedCount})</span>
           </button>
 
+          {/* Channel Members Management */}
+          {activeView === 'channel' && currentChannel && (
+            <button
+              onClick={() => setIsChannelMembersOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 text-xs transition-colors cursor-pointer"
+              title="Gestionar miembros del canal"
+            >
+              <Users className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">Miembros ({currentChannel.memberIds?.length || 0})</span>
+            </button>
+          )}
+
           {/* Conversation Settings (Members & Group Management) */}
           {activeView === 'conversation' && currentConversation && (
             <button
@@ -567,26 +586,29 @@ export const ChatArea: React.FC = () => {
             </button>
           )}
 
-          {/* Voice Call Trigger */}
+          {/* Voice Call Trigger (guarded) */}
+          {features.calls && (
+            <button
+              onClick={() => handleStartCall(false)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors cursor-pointer"
+              title="Iniciar llamada de voz"
+            >
+              <Phone className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Voz</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => handleStartCall(false)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors cursor-pointer"
-            title="Iniciar llamada de voz"
-          >
-            <Phone className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Voz</span>
-          </button>
-
-          {/* Video Call Trigger */}
-          <button
-            onClick={() => handleStartCall(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-colors cursor-pointer"
-            title="Iniciar videollamada"
-          >
-            <Video className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Video</span>
-          </button>
+          {/* Video Call Trigger (guarded) */}
+          {features.videoCalls && (
+            <button
+              onClick={() => handleStartCall(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-colors cursor-pointer"
+              title="Iniciar videollamada"
+            >
+              <Video className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Video</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -970,6 +992,15 @@ export const ChatArea: React.FC = () => {
           conversation={currentConversation}
           isOpen={isConvSettingsOpen}
           onClose={() => setIsConvSettingsOpen(false)}
+        />
+      )}
+
+      {/* Channel Members Modal */}
+      {currentChannel && (
+        <ChannelMembersModal
+          channel={currentChannel}
+          isOpen={isChannelMembersOpen}
+          onClose={() => setIsChannelMembersOpen(false)}
         />
       )}
     </div>

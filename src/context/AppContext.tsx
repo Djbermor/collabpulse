@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { User, Tenant, Workspace, Channel, Conversation, Message, Notification, Meeting, ToastNotification, SavedItem, UserSettings } from '../types';
+import { User, Tenant, Workspace, Channel, Conversation, Message, Notification, Meeting, ToastNotification, SavedItem, UserSettings, FeaturePermissions, DEFAULT_MVP_FEATURES } from '../types';
 import { api } from '../services/api';
 import { signalR } from '../services/signalr';
 import { sound } from '../services/sound';
@@ -71,6 +71,11 @@ interface AppContextType {
   setIsQuickActionOpen: (open: boolean) => void;
   isStartDmOpen: boolean;
   setIsStartDmOpen: (open: boolean) => void;
+  isCreateGroupOpen: boolean;
+  setIsCreateGroupOpen: (open: boolean) => void;
+  features: FeaturePermissions;
+  isFeatureEnabled: (feature: keyof FeaturePermissions) => boolean;
+  updateFeaturePermissions: (permissions: Partial<FeaturePermissions>) => Promise<boolean>;
   incomingCall: any | null;
   setIncomingCall: (call: any | null) => void;
   outgoingCall: any | null;
@@ -88,7 +93,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
-  const [activeView, setActiveView] = useState<ActiveView>('channel');
+  const [activeView, setActiveViewState] = useState<ActiveView>('channel');
+  const [features, setFeatures] = useState<FeaturePermissions>(DEFAULT_MVP_FEATURES);
   const [activeThreadParent, setActiveThreadParent] = useState<Message | null>(null);
   const [activeMeeting, setActiveMeeting] = useState<Meeting | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -104,6 +110,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isQuickActionOpen, setIsQuickActionOpen] = useState<boolean>(false);
   const [isStartDmOpen, setIsStartDmOpen] = useState<boolean>(false);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState<boolean>(false);
   const [incomingCall, setIncomingCall] = useState<any | null>(null);
   const [outgoingCall, setOutgoingCall] = useState<any | null>(null);
 
@@ -220,14 +227,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setCurrentUser(meRes.data.user);
 
-      const [tenantsRes, workspacesRes, channelsRes, convsRes, notifsRes, savedRes] = await Promise.all([
+      const [tenantsRes, workspacesRes, channelsRes, convsRes, notifsRes, savedRes, featuresRes] = await Promise.all([
         api.getTenants(),
         api.getWorkspaces(),
         api.getChannels(),
         api.getConversations(),
         api.getNotifications(),
-        api.getSavedMessages()
+        api.getSavedMessages(),
+        api.getFeaturePermissions()
       ]);
+
+      if (featuresRes && featuresRes.success && featuresRes.data) {
+        setFeatures(featuresRes.data);
+      }
 
       if (tenantsRes.success && tenantsRes.data) {
         setTenants(tenantsRes.data);
@@ -396,6 +408,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setNotifications(prev => [notif, ...prev]);
     });
 
+    signalR.on('FeaturePermissionsUpdated', (updatedFeatures: FeaturePermissions) => {
+      setFeatures(updatedFeatures);
+    });
+
     const handleGlobalMessage = (msg: Message) => {
       if (!msg) return;
       if (msg.conversationId) {
@@ -439,11 +455,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       window.removeEventListener('collabpulse:call-ended', handleGlobalCallEnded);
       signalR.off('MessageCreated', handleGlobalMessage);
       signalR.off('MessageReceived', handleGlobalMessage);
-      signalR.off('IncomingCall');
-      signalR.off('CallCancelled');
-      signalR.off('CallResponse');
-      signalR.off('CallEnded');
-      signalR.stop();
     };
   }, [currentUser?.id, currentTenant?.id, currentChannel?.id, currentConversation?.id]);
 
@@ -653,6 +664,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const isFeatureEnabled = useCallback((feature: keyof FeaturePermissions) => {
+    return !!features[feature];
+  }, [features]);
+
+  const updateFeaturePermissions = useCallback(async (permissions: Partial<FeaturePermissions>) => {
+    const res = await api.updateFeaturePermissions(permissions);
+    if (res.success && res.data) {
+      setFeatures(res.data);
+      addToast('Permisos de funcionalidades actualizados', 'success');
+      return true;
+    }
+    addToast(res.message || 'Error al actualizar permisos', 'error');
+    return false;
+  }, [addToast]);
+
+  const setActiveView = useCallback((view: ActiveView) => {
+    const viewToFeature: Partial<Record<ActiveView, keyof FeaturePermissions>> = {
+      channel: 'channels',
+      conversation: 'messaging',
+      tasks: 'tasks',
+      calendar: 'calendar',
+      meeting: 'calls',
+      files: 'files',
+      saved: 'saved',
+      activity: 'activity'
+    };
+    const reqFeature = viewToFeature[view];
+    if (reqFeature && !features[reqFeature]) {
+      addToast('Funcionalidad no disponible en esta versión.', 'info');
+      setActiveViewState('channel');
+      return;
+    }
+    setActiveViewState(view);
+  }, [features, addToast]);
+
+  useEffect(() => {
+    const viewToFeature: Partial<Record<ActiveView, keyof FeaturePermissions>> = {
+      tasks: 'tasks',
+      calendar: 'calendar',
+      meeting: 'calls',
+      files: 'files',
+      saved: 'saved',
+      activity: 'activity'
+    };
+    const reqFeature = viewToFeature[activeView];
+    if (reqFeature && !features[reqFeature]) {
+      setActiveViewState('channel');
+    }
+  }, [features, activeView]);
+
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   return (
@@ -728,6 +789,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsQuickActionOpen,
         isStartDmOpen,
         setIsStartDmOpen,
+        isCreateGroupOpen,
+        setIsCreateGroupOpen,
+        features,
+        isFeatureEnabled,
+        updateFeaturePermissions,
         incomingCall,
         setIncomingCall,
         outgoingCall,

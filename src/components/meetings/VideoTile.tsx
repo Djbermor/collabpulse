@@ -117,9 +117,9 @@ export const VideoTile: React.FC<VideoTileProps> = ({
         autoPlay
         playsInline
         muted={isLocal || !isLocal}
-        className={`w-full h-full object-cover ${isLocal && !isScreenShare ? 'transform scale-x-[-1]' : ''} ${
-          showVideo ? 'block' : 'hidden'
-        }`}
+        className={`w-full h-full ${isScreenShare ? 'object-contain bg-black' : 'object-cover'} ${
+          isLocal && !isScreenShare ? 'transform scale-x-[-1]' : ''
+        } ${showVideo ? 'block' : 'hidden'}`}
       />
 
       {/* Fallback Avatar Placeholder when video is off */}

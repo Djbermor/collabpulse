@@ -16,8 +16,9 @@ import { searchRouter } from './server/routes/search';
 import { adminRouter } from './server/routes/admin';
 import { signalingRouter } from './server/routes/signaling';
 import { callsRouter } from './server/routes/calls';
+import { groupCallsRouter } from './server/routes/groupCalls';
 import { organizationsRouter } from './server/routes/organizations';
-import { correlationMiddleware } from './server/middleware';
+import { correlationMiddleware, requireFeature } from './server/middleware';
 import { db } from './server/db';
 import { pool } from './src/db/index';
 
@@ -155,21 +156,29 @@ app.get('/api/v1/realtime/stats', (req, res) => {
   res.json({ success: true, data: realtimeHub.getStats() });
 });
 
+// Feature Permissions (Global endpoint accessible to clients)
+app.get('/api/v1/features', (req, res) => {
+  const tenantId = (req.query.tenantId as string) || (req.headers['x-tenant-id'] as string) || 'tenant-mu36yjdt';
+  const features = db.getFeaturePermissions(tenantId);
+  res.json({ success: true, data: features });
+});
+
 // Mount API v1 Routes
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/workspaces', workspacesRouter);
 app.use('/api/v1/channels', channelsRouter);
 app.use('/api/v1/conversations', conversationsRouter);
 app.use('/api/v1/messages', messagesRouter);
-app.use('/api/v1/tasks', tasksRouter);
-app.use('/api/v1/calendar', calendarRouter);
-app.use('/api/v1/meetings', meetingsRouter);
-app.use('/api/v1/files', filesRouter);
+app.use('/api/v1/tasks', requireFeature('tasks'), tasksRouter);
+app.use('/api/v1/calendar', requireFeature('calendar'), calendarRouter);
+app.use('/api/v1/meetings', requireFeature('videoCalls'), meetingsRouter);
+app.use('/api/v1/files', requireFeature('files'), filesRouter);
 app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/search', searchRouter);
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/realtime/signal', signalingRouter);
-app.use('/api/v1/calls', callsRouter);
+app.use('/api/v1/calls', requireFeature('calls'), callsRouter);
+app.use('/api/v1/group-calls', requireFeature('videoCalls'), groupCallsRouter);
 app.use('/api/v1/organizations', organizationsRouter);
 
 // Serve physical user uploads statically

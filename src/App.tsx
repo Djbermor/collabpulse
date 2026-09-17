@@ -19,16 +19,37 @@ import { UserProfileModal } from './components/modals/UserProfileModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { QuickActionModal } from './components/modals/QuickActionModal';
 import { StartDmModal } from './components/modals/StartDmModal';
+import { CreateGroupModal } from './components/modals/CreateGroupModal';
 import { IncomingCallModal } from './components/meetings/IncomingCallModal';
 import { OutgoingCallModal } from './components/meetings/OutgoingCallModal';
-import { CallWindow } from './components/meetings/CallWindow';
+import { CallWindow } from './components/calls/CallWindow';
 import { CallProvider } from './context/CallContext';
 import { CallsView } from './components/meetings/CallsView';
 import { OfflineBanner } from './components/layout/OfflineBanner';
 import { ToastContainer } from './components/layout/ToastContainer';
 import { AuthScreen } from './components/auth/AuthScreen';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldAlert } from 'lucide-react';
 
+const DisabledFeatureFallback: React.FC<{ name: string }> = ({ name }) => {
+  const { setActiveView } = useApp();
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-900/40 select-none">
+      <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4">
+        <ShieldAlert className="w-8 h-8" />
+      </div>
+      <h3 className="text-base font-bold text-slate-100 mb-2">Funcionalidad no disponible en esta versión</h3>
+      <p className="text-xs text-slate-400 max-w-md mb-6 leading-relaxed">
+        El módulo <span className="font-semibold text-slate-200">{name}</span> está actualmente deshabilitado en esta versión MVP de CollabPulse. Puede ser habilitado por un administrador desde el panel de control.
+      </p>
+      <button
+        onClick={() => setActiveView('channel')}
+        className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-colors cursor-pointer shadow-md shadow-indigo-600/30"
+      >
+        Volver a Mensajería
+      </button>
+    </div>
+  );
+};
 
 const MainLayout: React.FC = () => {
   const {
@@ -44,7 +65,8 @@ const MainLayout: React.FC = () => {
     setIsSettingsOpen,
     isQuickActionOpen,
     setIsQuickActionOpen,
-    setSidebarCollapsed
+    setSidebarCollapsed,
+    features
   } = useApp();
 
   // Global Keyboard Shortcuts (Keyboard-first principle)
@@ -102,17 +124,21 @@ const MainLayout: React.FC = () => {
       case 'conversation':
         return <ChatArea />;
       case 'activity':
-        return <ActivityView />;
+        return features.activity ? <ActivityView /> : <DisabledFeatureFallback name="Actividad y Notificaciones" />;
       case 'saved':
-        return <SavedView />;
+        return features.saved ? <SavedView /> : <DisabledFeatureFallback name="Elementos Guardados" />;
       case 'tasks':
-        return <TasksView />;
+        return features.tasks ? <TasksView /> : <DisabledFeatureFallback name="Tablero de Tareas Kanban" />;
       case 'calendar':
-        return <CalendarView />;
+        return features.calendar ? <CalendarView /> : <DisabledFeatureFallback name="Calendario Corporativo" />;
       case 'meeting':
-        return activeMeeting ? <MeetingRoom /> : <CallsView />;
+        return (features.calls || features.videoCalls) ? (
+          activeMeeting ? <MeetingRoom /> : <CallsView />
+        ) : (
+          <DisabledFeatureFallback name="Llamadas y Videollamadas" />
+        );
       case 'files':
-        return <FilesView />;
+        return features.files ? <FilesView /> : <DisabledFeatureFallback name="Archivos y Documentos" />;
       case 'admin':
         return <AdminView />;
       default:
@@ -151,9 +177,16 @@ const MainLayout: React.FC = () => {
       <SettingsModal />
       <QuickActionModal />
       <StartDmModal />
-      <IncomingCallModal />
-      <OutgoingCallModal />
-      <CallWindow />
+      <CreateGroupModal />
+
+      {/* Call Modals (completely unmounted if calls are disabled) */}
+      {(features.calls || features.videoCalls) && (
+        <>
+          <IncomingCallModal />
+          <OutgoingCallModal />
+          <CallWindow />
+        </>
+      )}
 
       {/* Global Toast Notification System */}
       <ToastContainer />

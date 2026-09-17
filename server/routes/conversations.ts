@@ -342,3 +342,166 @@ conversationsRouter.delete('/:id', authenticate, async (req: AuthenticatedReques
   res.json({ success: true, message: 'Conversación eliminada definitivamente' });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 6: IN-CALL CHAT & MESSAGING — NEW CONVERSATION ENDPOINTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Get single conversation with members and metadata
+conversationsRouter.get('/:id', authenticate, (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+  const userId = req.user!.id;
+
+  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId);
+  if (!conv) {
+    return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
+  }
+  if (!conv.memberIds.includes(userId)) {
+    return res.status(403).json({ success: false, message: 'No tienes acceso a esta conversación' });
+  }
+
+  const members = conv.memberIds.map(mId => {
+    const u = db.users.find(u => u.id === mId);
+    return u ? {
+      id: u.id,
+      displayName: u.displayName,
+      avatarUrl: u.avatarUrl,
+      status: u.status,
+      jobTitle: u.jobTitle
+    } : { id: mId, displayName: 'Colaborador', avatarUrl: '', status: 'Offline' };
+  });
+
+  res.json({ success: true, data: { ...conv, members } });
+});
+
+// Get messages for a specific conversation (cursor-paginated)
+conversationsRouter.get('/:id/messages', authenticate, (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const tenantId = req.user!.tenantId;
+  const userId = req.user!.id;
+  const { cursor, limit = 50, direction = 'before' } = req.query;
+
+  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId);
+  if (!conv) {
+    return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
+  }
+  if (!conv.memberIds.includes(userId)) {
+    return res.status(403).json({ success: false, message: 'No tienes acceso a esta conversación' });
+  }
+
+  let filtered = db.messages
+    .filter(m => m.conversationId === id && m.tenantId === tenantId && !m.parentMessageId)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  const pageSize = Math.min(100, Math.max(1, Number(limit) || 50));
+  let resultMessages: typeof filtered = [];
+  let hasMore = false;
+
+  if (cursor) {
+    const cursorIndex = filtered.findIndex(m => m.id === cursor);
+    if (cursorIndex !== -1) {
+      if (direction === 'after') {
+        resultMessages = filtered.slice(cursorIndex + 1, cursorIndex + 1 + pageSize);
+        hasMore = cursorIndex + 1 + pageSize < filtered.length;
+      } else {
+        const start = Math.max(0, cursorIndex - pageSize);
+        resultMessages = filtered.slice(start, cursorIndex);
+        hasMore = start > 0;
+      }
+    } else {
+      resultMessages = filtered.slice(-pageSize);
+      hasMore = filtered.length > pageSize;
+    }
+  } else {
+    resultMessages = filtered.slice(-pageSize);
+    hasMore = filtered.length > pageSize;
+  }
+
+  const nextCursor = resultMessages.length > 0 ? resultMessages[resultMessages.length - 1].id : null;
+  const prevCursor = resultMessages.length > 0 ? resultMessages[0].id : null;
+
+  res.json({
+    success: true,
+    data: resultMessages,
+    pagination: { nextCursor, prevCursor, hasMore, total: filtered.length }
+  });
+});
+
+// Send message directly in a conversation (shortcut endpoint for in-call chat)
+conversationsRouter.post('/:id/messages', authenticate, requirePermission('messages.create'), async (req: AuthenticatedRequest, res: Response) => {
+  const { id: conversationId } = req.params;
+  const tenantId = req.user!.tenantId;
+  const user = req.user!;
+  const { content, attachments = [], clientMessageId, parentMessageId } = req.body;
+
+  const conv = db.conversations.find(c => c.id === conversationId && c.tenantId === tenantId);
+  if (!conv) {
+    return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
+  }
+  if (!conv.memberIds.includes(user.id)) {
+    return res.status(403).json({ success: false, message: 'No eres miembro de esta conversación' });
+  }
+
+  if (!content && (!attachments || attachments.length === 0)) {
+    return res.status(400).json({ success: false, message: 'El contenido del mensaje no puede estar vacío' });
+  }
+
+  // DB-level & in-memory idempotency check
+  if (clientMessageId) {
+    const existingMem = db.messages.find(m => (m as any).clientMessageId === clientMessageId);
+    if (existingMem) {
+      return res.status(200).json({ success: true, data: existingMem, duplicate: true });
+    }
+    const existingId = await db.findMessageByClientId(clientMessageId, tenantId);
+    if (existingId) {
+      const existing = db.messages.find(m => m.id === existingId);
+      if (existing) {
+        return res.status(200).json({ success: true, data: existing, duplicate: true });
+      }
+    }
+  }
+
+  const workspaceId = req.workspace?.id || conv.workspaceId || db.workspaces[0]?.id || '';
+  const cleanContent = sanitizeText(content || '');
+
+  const newMessage = {
+    id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    tenantId,
+    workspaceId,
+    conversationId,
+    channelId: undefined as string | undefined,
+    parentMessageId: parentMessageId || undefined,
+    threadRootMessageId: parentMessageId || undefined,
+    senderId: user.id,
+    senderName: user.displayName || `${user.firstName} ${user.lastName}`,
+    senderAvatar: user.avatarUrl,
+    content: cleanContent,
+    messageType: (attachments.length > 0 && !content ? 'file' : 'text') as 'text' | 'file',
+    isEdited: false,
+    isDeleted: false,
+    isPinned: false,
+    reactions: [],
+    attachments: attachments || [],
+    repliesCount: 0,
+    clientMessageId: clientMessageId || undefined,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  db.messages.push(newMessage as any);
+  await db.persistMessage(newMessage as any, clientMessageId);
+
+  // Update conversation last-message meta
+  (conv as any).lastMessage = cleanContent || 'Archivo adjunto';
+  (conv as any).lastMessageAt = newMessage.createdAt;
+  conv.updatedAt = new Date().toISOString();
+
+  // Broadcast to conversation group and each member
+  realtimeHub.broadcastToConversation(conversationId, 'MessageCreated', newMessage);
+  for (const memberId of conv.memberIds) {
+    realtimeHub.sendToUser(memberId, 'MessageCreated', newMessage);
+  }
+  realtimeHub.broadcastToConversation(conversationId, 'ConversationUpdated', conv);
+
+  res.status(201).json({ success: true, data: newMessage });
+});

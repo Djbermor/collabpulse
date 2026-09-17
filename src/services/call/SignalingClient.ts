@@ -25,6 +25,8 @@ export type CallCancelledHandler = (data: { callId: string; roomId: string; reas
 export type CallEndedHandler = (data: { callId: string; roomId: string; endedBy: string; durationSeconds?: number }) => void;
 export type CallClaimedHandler = (data: { callId: string; claimedByTabId: string }) => void;
 export type CallTimeoutHandler = (data: { callId: string; roomId: string }) => void;
+export type CallHeldHandler = (data: { callId: string; roomId: string; heldBy: string }) => void;
+export type CallResumedHandler = (data: { callId: string; roomId: string; resumedBy: string }) => void;
 
 export class SignalingClient {
   private tabId: string;
@@ -38,6 +40,8 @@ export class SignalingClient {
   private onCallEndedListeners: Set<CallEndedHandler> = new Set();
   private onCallClaimedListeners: Set<CallClaimedHandler> = new Set();
   private onCallTimeoutListeners: Set<CallTimeoutHandler> = new Set();
+  private onCallHeldListeners: Set<CallHeldHandler> = new Set();
+  private onCallResumedListeners: Set<CallResumedHandler> = new Set();
 
   constructor() {
     this.tabId = `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
@@ -103,6 +107,16 @@ export class SignalingClient {
       callLog('SignalingClient: Received CallTimeout event', data);
       this.onCallTimeoutListeners.forEach(listener => listener(data));
     });
+
+    signalR.on('CallHeld', (data: any) => {
+      callLog('SignalingClient: Received CallHeld event', data);
+      this.onCallHeldListeners.forEach(listener => listener(data));
+    });
+
+    signalR.on('CallResumed', (data: any) => {
+      callLog('SignalingClient: Received CallResumed event', data);
+      this.onCallResumedListeners.forEach(listener => listener(data));
+    });
   }
 
   // --- Listener Subscriptions ---
@@ -139,6 +153,16 @@ export class SignalingClient {
   public onCallTimeout(handler: CallTimeoutHandler): () => void {
     this.onCallTimeoutListeners.add(handler);
     return () => this.onCallTimeoutListeners.delete(handler);
+  }
+
+  public onCallHeld(handler: CallHeldHandler): () => void {
+    this.onCallHeldListeners.add(handler);
+    return () => this.onCallHeldListeners.delete(handler);
+  }
+
+  public onCallResumed(handler: CallResumedHandler): () => void {
+    this.onCallResumedListeners.add(handler);
+    return () => this.onCallResumedListeners.delete(handler);
   }
 
   // --- Outgoing Signaling Actions ---
@@ -254,6 +278,24 @@ export class SignalingClient {
   public async cancelCall(callId: string, targetUserId?: string, roomId?: string): Promise<any> {
     callLog('SignalingClient: Cancelling call', { callId, targetUserId });
     return await api.post('/calls/cancel', {
+      callId,
+      targetUserId,
+      roomId
+    });
+  }
+
+  public async sendHold(callId: string, targetUserId?: string, roomId?: string): Promise<any> {
+    callLog('SignalingClient: Holding call', { callId, targetUserId, roomId });
+    return await api.post('/calls/hold', {
+      callId,
+      targetUserId,
+      roomId
+    });
+  }
+
+  public async sendResume(callId: string, targetUserId?: string, roomId?: string): Promise<any> {
+    callLog('SignalingClient: Resuming call', { callId, targetUserId, roomId });
+    return await api.post('/calls/resume', {
       callId,
       targetUserId,
       roomId

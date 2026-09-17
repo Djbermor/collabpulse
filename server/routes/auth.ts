@@ -27,8 +27,9 @@ import {
   REFRESH_TOKEN_LIFETIME_SECONDS
 } from '../security';
 import { authenticate, AuthenticatedRequest, requestAuditBuffer } from '../middleware';
-import { User, UserRole, UserSession, WorkspaceMember, AccountStatus } from '../../src/types';
+import { User, UserRole, UserSession, WorkspaceMember, AccountStatus, Workspace } from '../../src/types';
 import { adminAuth } from '../../src/lib/firebase-admin';
+import { pool } from '../../src/db/index';
 
 export const authRouter = Router();
 
@@ -97,12 +98,58 @@ authRouter.post('/login', async (req, res) => {
   }
 
   // 3. User Lookup by normalizedEmail or normalizedUserName
-  const user = db.users.find(u =>
+  let user = db.users.find(u =>
     u.normalizedEmail === normalized ||
     (u.email && u.email.toLowerCase() === normalized) ||
     u.normalizedUserName === normalized ||
     (u.userName && u.userName.toLowerCase() === normalized)
   );
+
+  if (!user) {
+    try {
+      const dbRes = await pool.query(
+        'SELECT * FROM users WHERE normalized_email = $1 OR lower(email) = $1 OR normalized_user_name = $1 OR lower(user_name) = $1',
+        [normalized]
+      );
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        user = {
+          id: row.id,
+          tenantId: row.tenant_id,
+          email: row.email,
+          normalizedEmail: row.normalized_email || (row.email ? row.email.toLowerCase() : ''),
+          userName: row.user_name,
+          normalizedUserName: row.normalized_user_name || (row.user_name ? row.user_name.toLowerCase() : ''),
+          firstName: row.first_name,
+          lastName: row.last_name,
+          displayName: row.display_name,
+          passwordHash: row.password_hash,
+          avatarUrl: row.avatar_url || '',
+          jobTitle: row.job_title || '',
+          role: row.role || 'Member',
+          status: row.status || 'Active',
+          accountStatus: row.account_status || 'Active',
+          isActive: row.is_active !== false,
+          emailVerified: row.email_verified === true,
+          failedLoginAttempts: row.failed_login_attempts || 0,
+          timeZone: row.time_zone || 'UTC',
+          lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at).toISOString() : undefined,
+          createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+          updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString()
+        };
+        db.users.push(user);
+      }
+    } catch (err: any) {
+      console.warn('[Auth] DB lookup fallback error:', err.message);
+    }
+  } else {
+    try {
+      const dbRes = await pool.query('SELECT tenant_id as "tenantId" FROM users WHERE id = $1', [user.id]);
+      if (dbRes.rows.length > 0 && dbRes.rows[0].tenantId) {
+        user.tenantId = dbRes.rows[0].tenantId;
+      }
+    } catch {}
+  }
 
   if (!user) {
     const attemptResult = recordFailedLogin(normalized, ip);
@@ -177,6 +224,26 @@ authRouter.post('/login', async (req, res) => {
   let workspace = targetWsId ? db.workspaces.find(w => w.id === targetWsId) : undefined;
   if (!workspace) {
     workspace = db.workspaces.find(w => w.tenantId === user.tenantId);
+  }
+  if (!workspace) {
+    try {
+      const wsRes = await pool.query('SELECT * FROM workspaces WHERE tenant_id = $1 LIMIT 1', [user.tenantId]);
+      if (wsRes.rows.length > 0) {
+        const wsRow = wsRes.rows[0];
+        workspace = {
+          id: wsRow.id,
+          name: wsRow.name,
+          slug: wsRow.slug,
+          tenantId: wsRow.tenant_id,
+          timeZone: wsRow.time_zone || 'UTC',
+          language: wsRow.language || 'es',
+          createdAt: wsRow.created_at ? new Date(wsRow.created_at).toISOString() : new Date().toISOString()
+        };
+        db.workspaces.push(workspace);
+      }
+    } catch (e: any) {
+      console.warn('[Auth] Workspace DB fallback error:', e.message);
+    }
   }
 
   const member = db.workspaceMembers.find(m => m.workspaceId === workspace?.id && m.userId === user.id);
@@ -344,8 +411,60 @@ authRouter.post('/register', async (req, res) => {
 
   const targetTenantId = matchedOrgId || (db.organizations[0]?.id) || (db.tenants[0]?.id) || 'org-default';
 
+  // Ensure tenant and organization exist in PostgreSQL and in-memory store to prevent FK violation
+  const orgName = (req.body.tenantName as string) || (db.organizations.find(o => o.id === targetTenantId)?.name) || 'Organización';
+  const orgSlug = `org-${targetTenantId.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`.substring(0, 50);
+
+  try {
+    await pool.query(
+      `INSERT INTO tenants (id, name, slug) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+      [targetTenantId, orgName, orgSlug]
+    );
+    await pool.query(
+      `INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
+      [targetTenantId, orgName, orgSlug]
+    );
+  } catch (err: any) {
+    console.warn('[Auth] Ensure tenant/organization error:', err.message);
+  }
+
+  if (!db.organizations.some(o => o.id === targetTenantId)) {
+    db.organizations.push({
+      id: targetTenantId,
+      name: orgName,
+      slug: orgSlug,
+      type: 'Enterprise',
+      industry: 'Technology',
+      status: 'Active',
+      settings: '{}',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    } as any);
+  }
+
   // Target workspace for this tenant
-  const workspace = db.workspaces.find(w => w.tenantId === targetTenantId) || db.workspaces[0];
+  let workspace = db.workspaces.find(w => w.tenantId === targetTenantId) || db.workspaces[0];
+  if (!workspace) {
+    const newWsId = `ws-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const newWs: Workspace = {
+      id: newWsId,
+      tenantId: targetTenantId,
+      name: `${orgName} - General`,
+      slug: 'general',
+      description: 'Espacio de trabajo principal',
+      status: 'Active',
+      timeZone: 'Europe/Madrid',
+      language: 'es-ES',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    db.workspaces.push(newWs);
+    try {
+      await db.persistWorkspace(newWs);
+      workspace = newWs;
+    } catch {}
+  }
+
   const userName = `${cleanFirstName.toLowerCase().replace(/\s+/g, '.')}.${cleanLastName.toLowerCase().replace(/\s+/g, '')}.${Math.floor(Math.random() * 900 + 100)}`;
   const normalizedUserName = normalizeUserName(userName);
 

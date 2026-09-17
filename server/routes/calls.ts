@@ -205,11 +205,35 @@ callsRouter.post('/invite', authenticate, async (req: AuthenticatedRequest, res:
     createdAt: now
   });
 
+  // FASE 6: Auto-create a conversation for in-call chat (must be before invitePayload)
+  const callMemberIds = [callerId, ...(targetUserId ? [targetUserId] : [])];
+  const workspaceId = req.workspace?.id || 'ws-default';
+  const { id: linkedConvId, isNew: convIsNew } = await db.findOrCreateCallConversation({
+    callId,
+    tenantId: callerTenantId,
+    workspaceId,
+    memberIds: callMemberIds,
+    title: title || (mediaType === 'video' ? 'Videollamada' : 'Llamada de voz'),
+    type: 'direct'
+  });
+  if (convIsNew) {
+    await db.persistSystemMessage({
+      conversationId: linkedConvId,
+      tenantId: callerTenantId,
+      workspaceId,
+      content: `📞 Llamada iniciada por ${caller?.displayName || 'Colaborador'}`
+    });
+  }
+  // Patch the callSession with the conversation ID for future reference
+  callSession.conversationId = callSession.conversationId || linkedConvId;
+  await db.persistCall(callSession);
+
   const invitePayload = {
     callId,
     roomId,
     conversationId,
     channelId,
+    callConversationId: linkedConvId, // FASE 6: in-call chat conversation
     title: title || (mediaType === 'video' ? 'Videollamada' : 'Llamada de voz'),
     isVideo: mediaType !== 'audio',
     callType: mediaType,
@@ -285,7 +309,8 @@ callsRouter.post('/invite', authenticate, async (req: AuthenticatedRequest, res:
       call: callSession,
       callId,
       roomId,
-      mediaType
+      mediaType,
+      callConversationId: linkedConvId
     }
   });
 });
@@ -551,6 +576,142 @@ callsRouter.post('/end', authenticate, async (req: AuthenticatedRequest, res: Re
   }
 
   return res.json({ success: true, message: 'Llamada finalizada correctamente', data: { durationSeconds } });
+});
+
+/**
+ * POST /api/v1/calls/hold
+ * Puts a call on hold in PostgreSQL and notifies the remote peer.
+ */
+callsRouter.post('/hold', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.user!.id;
+  const tenantId = req.user!.tenantId;
+  const { callId, roomId, targetUserId } = req.body;
+
+  if (!callId) {
+    return res.status(400).json({ success: false, message: 'callId es requerido' });
+  }
+
+  const now = new Date().toISOString();
+  const call = db.getCall(callId);
+  if (call) {
+    if (call.tenantId && call.tenantId !== tenantId) {
+      return res.status(403).json({ success: false, message: 'Acceso denegado a llamada de otro inquilino' });
+    }
+    call.state = 'held';
+    await db.persistCall(call);
+  } else {
+    // Check direct PostgreSQL record
+    const dbCall = await pool.query('SELECT * FROM calls WHERE id = $1', [callId]);
+    if (dbCall.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Llamada no encontrada' });
+    }
+    const row = dbCall.rows[0];
+    if (row.tenant_id && row.tenant_id !== tenantId) {
+      return res.status(403).json({ success: false, message: 'Acceso denegado a llamada de otro inquilino' });
+    }
+    await pool.query('UPDATE calls SET status = $1 WHERE id = $2', ['held', callId]);
+  }
+
+  await db.persistCallHistory({
+    id: `hist-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    callId,
+    tenantId,
+    eventType: 'held',
+    userId,
+    metadata: { heldBy: userId, roomId },
+    createdAt: now
+  });
+
+  const payload = {
+    callId,
+    roomId,
+    heldBy: userId,
+    timestamp: now
+  };
+
+  if (targetUserId) {
+    realtimeHub.sendToUser(targetUserId, 'CallHeld', payload);
+    realtimeHub.sendToUser(targetUserId, 'WebRTCSignal', {
+      callId,
+      roomId,
+      senderId: userId,
+      signalType: 'call-held',
+      data: payload,
+      timestamp: now
+    });
+  } else if (roomId) {
+    realtimeHub.broadcastToGroup(`meeting:${roomId}`, 'CallHeld', payload);
+  }
+
+  return res.json({ success: true, message: 'Llamada puesta en espera correctamente', data: { callId, state: 'held' } });
+});
+
+/**
+ * POST /api/v1/calls/resume
+ * Resumes a held call in PostgreSQL and notifies the remote peer.
+ */
+callsRouter.post('/resume', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.user!.id;
+  const tenantId = req.user!.tenantId;
+  const { callId, roomId, targetUserId } = req.body;
+
+  if (!callId) {
+    return res.status(400).json({ success: false, message: 'callId es requerido' });
+  }
+
+  const now = new Date().toISOString();
+  const call = db.getCall(callId);
+  if (call) {
+    if (call.tenantId && call.tenantId !== tenantId) {
+      return res.status(403).json({ success: false, message: 'Acceso denegado a llamada de otro inquilino' });
+    }
+    call.state = 'active';
+    await db.persistCall(call);
+  } else {
+    // Check direct PostgreSQL record
+    const dbCall = await pool.query('SELECT * FROM calls WHERE id = $1', [callId]);
+    if (dbCall.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Llamada no encontrada' });
+    }
+    const row = dbCall.rows[0];
+    if (row.tenant_id && row.tenant_id !== tenantId) {
+      return res.status(403).json({ success: false, message: 'Acceso denegado a llamada de otro inquilino' });
+    }
+    await pool.query('UPDATE calls SET status = $1 WHERE id = $2', ['in_progress', callId]);
+  }
+
+  await db.persistCallHistory({
+    id: `hist-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    callId,
+    tenantId,
+    eventType: 'resumed',
+    userId,
+    metadata: { resumedBy: userId, roomId },
+    createdAt: now
+  });
+
+  const payload = {
+    callId,
+    roomId,
+    resumedBy: userId,
+    timestamp: now
+  };
+
+  if (targetUserId) {
+    realtimeHub.sendToUser(targetUserId, 'CallResumed', payload);
+    realtimeHub.sendToUser(targetUserId, 'WebRTCSignal', {
+      callId,
+      roomId,
+      senderId: userId,
+      signalType: 'call-resumed',
+      data: payload,
+      timestamp: now
+    });
+  } else if (roomId) {
+    realtimeHub.broadcastToGroup(`meeting:${roomId}`, 'CallResumed', payload);
+  }
+
+  return res.json({ success: true, message: 'Llamada reanudada correctamente', data: { callId, state: 'active' } });
 });
 
 /**

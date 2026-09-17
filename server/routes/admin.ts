@@ -2,9 +2,48 @@ import { Router, Response } from 'express';
 import { db, ROLE_PERMISSIONS } from '../db';
 import { authenticate, requirePermission, AuthenticatedRequest } from '../middleware';
 import { sanitizeText, hashPassword, normalizeEmail, normalizeUserName, validatePasswordPolicy } from '../security';
-import { User, UserRole, WorkspaceMember } from '../../src/types';
+import { User, UserRole, WorkspaceMember, FeaturePermissions } from '../../src/types';
+import { realtimeHub } from '../realtime';
 
 export const adminRouter = Router();
+
+// Get feature permissions for current tenant
+adminRouter.get('/features', authenticate, (req: AuthenticatedRequest, res: Response) => {
+  const tenantId = req.user!.tenantId;
+  const features = db.getFeaturePermissions(tenantId);
+  res.json({ success: true, data: features });
+});
+
+// Update feature permissions (Admin / Owner ONLY)
+adminRouter.put('/features', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const user = req.user!;
+  if (user.role !== 'Admin' && user.role !== 'Owner') {
+    return res.status(403).json({
+      success: false,
+      message: 'Permiso denegado. Solo los administradores pueden modificar los permisos de funcionalidades.',
+      code: 'FORBIDDEN'
+    });
+  }
+
+  const tenantId = user.tenantId;
+  const permissions: Partial<FeaturePermissions> = req.body;
+
+  const updated = await db.setFeaturePermissions(tenantId, permissions, user.id);
+  db.logAudit(
+    tenantId,
+    user.id,
+    user.displayName,
+    'FEATURE_PERMISSIONS_UPDATED',
+    'FeaturePermissions',
+    `fp-${tenantId}`,
+    req.ip,
+    updated,
+    req.workspace?.id
+  );
+
+  realtimeHub.broadcastToTenant(tenantId, 'FeaturePermissionsUpdated', updated);
+  res.json({ success: true, data: updated });
+});
 
 // Get workspace & tenant statistics
 adminRouter.get('/stats', authenticate, requirePermission('workspace.read'), (req: AuthenticatedRequest, res: Response) => {

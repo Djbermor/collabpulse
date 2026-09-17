@@ -7,10 +7,17 @@ import { sound } from '../../services/sound';
 import { desktopNotifications } from '../../services/desktopNotifications';
 
 export const IncomingCallModal: React.FC = () => {
-  const { incomingCall, acceptCall, rejectCall } = useCall();
+  const { incomingCall, acceptCall, rejectCall, activeSession, callState, windowMode } = useCall();
 
   if (!incomingCall) return null;
 
+  // If CallWindow is open in normal/fullscreen mode during an active call,
+  // the in-call overlay banner inside CallWindow handles this non-intrusively without blocking UI.
+  if ((callState === 'active' || callState === 'held') && windowMode !== 'minimized') {
+    return null;
+  }
+
+  const hasActiveCall = !!activeSession && (activeSession.state === 'active' || activeSession.state === 'held');
   const caller = incomingCall.caller || {};
   const callerName = caller.displayName || 'Colaborador';
 
@@ -21,7 +28,6 @@ export const IncomingCallModal: React.FC = () => {
   const handleReject = async (reason = 'declined') => {
     await rejectCall(incomingCall.callId, reason);
   };
-
 
   return (
     <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 select-none animate-in fade-in">
@@ -52,6 +58,13 @@ export const IncomingCallModal: React.FC = () => {
           {incomingCall.isVideo ? <Video className="w-3.5 h-3.5 text-indigo-400" /> : <Phone className="w-3.5 h-3.5 text-emerald-400" />}
           <span>{incomingCall.isVideo ? 'Videollamada entrante...' : 'Llamada de voz entrante...'}</span>
         </p>
+
+        {hasActiveCall && (
+          <div className="mb-4 p-2.5 rounded-2xl bg-amber-950/90 border border-amber-700/60 text-amber-300 text-xs font-medium">
+            Tienes una llamada en curso. Aceptar pondrá tu llamada actual en espera.
+          </div>
+        )}
+
         <p className="text-[11px] text-slate-500 mb-8">
           {caller.jobTitle || 'Colaborador de tu espacio de trabajo'}
         </p>
@@ -75,7 +88,9 @@ export const IncomingCallModal: React.FC = () => {
             <div className="w-14 h-14 rounded-full bg-emerald-600 group-hover:bg-emerald-500 border border-emerald-500 text-white flex items-center justify-center transition-all shadow-lg shadow-emerald-950 animate-bounce">
               <Phone className="w-6 h-6" />
             </div>
-            <span className="text-[11px] font-semibold text-slate-300 group-hover:text-emerald-300">Aceptar</span>
+            <span className="text-[11px] font-semibold text-slate-300 group-hover:text-emerald-300">
+              {hasActiveCall ? 'Aceptar y poner en espera' : 'Aceptar'}
+            </span>
           </button>
         </div>
       </div>

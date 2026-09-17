@@ -37,7 +37,8 @@ export type GranularPermission =
   | 'meetings.create'
   | 'meetings.manage'
   | 'audit.read'
-  | 'settings.manage';
+  | 'settings.manage'
+  | 'reactions.remove';
 
 export type Permission = GranularPermission | string;
 
@@ -96,6 +97,32 @@ export interface OrganizationSettings {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface FeaturePermissions {
+  messaging: boolean;       // Mensajería (Chat 1:1)
+  channels: boolean;        // Canales
+  groups: boolean;          // Grupos
+  tasks: boolean;           // Tablero de Tareas Kanban
+  calendar: boolean;        // Calendario Corporativo
+  calls: boolean;           // Llamadas de Voz
+  videoCalls: boolean;      // Videollamadas
+  files: boolean;           // Archivos & Adjuntos
+  saved: boolean;           // Elementos Guardados
+  activity: boolean;        // Actividad & Notificaciones
+}
+
+export const DEFAULT_MVP_FEATURES: FeaturePermissions = {
+  messaging: true,
+  channels: true,
+  groups: true,
+  tasks: false,
+  calendar: false,
+  calls: false,
+  videoCalls: false,
+  files: false,
+  saved: false,
+  activity: false,
+};
 
 export interface Workspace {
   id: string;
@@ -285,6 +312,9 @@ export interface Conversation {
   createdAt: string;
   updatedAt: string;
   unreadCount?: number;
+  // FASE 6: link to associated call session
+  callId?: string;
+  channelId?: string;
 }
 
 export interface ConversationMember {
@@ -329,8 +359,10 @@ export interface Message {
   senderAvatar: string;
   content: string;
   clientMessageId?: string;
-  messageType: 'text' | 'file' | 'system';
+  messageType: 'text' | 'file' | 'system' | 'image' | 'audio';
   type?: 'text' | 'file' | 'system';
+  // FASE 6: delivery status
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   isEdited: boolean;
   editedAt?: string;
   isDeleted: boolean;
@@ -354,6 +386,42 @@ export interface Message {
   updatedAt: string;
   deletedAt?: string;
 }
+
+// FASE 6: Read receipt
+export interface MessageReadReceipt {
+  messageId: string;
+  userId: string;
+  readAt: string;
+}
+
+// FASE 6: Delivery receipt
+export interface MessageDeliveryReceipt {
+  messageId: string;
+  userId: string;
+  deliveredAt: string;
+}
+
+/**
+ * FASE 6: Simplified message type for in-call chat panel.
+ * Extends Message with additional rendering metadata.
+ */
+export interface InCallChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  content: string;
+  messageType: 'text' | 'file' | 'system' | 'image' | 'audio';
+  status?: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+  reactions: MessageReaction[];
+  attachments: MessageAttachment[];
+  clientMessageId?: string;
+  createdAt: string;
+  updatedAt?: string;
+  isSystem?: boolean;
+}
+
 
 export interface MessageEditHistory {
   id: string;
