@@ -37,7 +37,7 @@ export const SettingsModal: React.FC = () => {
               <Sliders className="w-4 h-4 text-indigo-400" />
               Preferencias
             </h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">CollabPulse Desktop</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Nexora Desktop</p>
           </div>
 
           <button
@@ -330,7 +330,7 @@ export const SettingsModal: React.FC = () => {
                 <div className="p-3.5 rounded-xl bg-slate-950/40 border border-slate-800/80 space-y-2">
                   <h4 className="font-semibold text-slate-100">Cifrado & Row Level Security (RLS)</h4>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Las contraseñas de CollabPulse están hasheadas con <strong>Argon2id</strong> y todos los mensajes y archivos están aislados a nivel de base de datos PostgreSQL mediante directivas RLS por Tenant.
+                    Las contraseñas de Nexora están hasheadas de forma segura y todos los mensajes y archivos están aislados a nivel de base de datos PostgreSQL mediante directivas RLS por Tenant.
                   </p>
                 </div>
               </div>

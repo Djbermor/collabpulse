@@ -1,9 +1,9 @@
-// Types definition for CollabPulse Enterprise Platform
+// Types definition for Nexora Enterprise Platform
 
 export type UserPresenceStatus = 'Online' | 'Away' | 'Busy' | 'DoNotDisturb' | 'Offline';
 export type UserStatus = UserPresenceStatus; // Backward compatibility
 
-export type AccountStatus = 'Active' | 'Inactive' | 'Suspended' | 'Deleted' | 'PendingVerification';
+export type AccountStatus = 'Active' | 'Inactive' | 'Suspended' | 'Deleted' | 'PendingVerification' | 'PENDING_ACTIVATION' | 'ACTIVE' | 'INACTIVE';
 
 export type UserRole = 'Owner' | 'Admin' | 'Member' | 'Guest';
 
@@ -57,14 +57,19 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
-  type: string;
-  industry: string;
+  type?: string;
+  industry?: string;
   logoUrl?: string;
-  primaryDomain: string;
-  status: 'Active' | 'Inactive' | 'Suspended';
+  primaryDomain?: string;
+  status: 'Active' | 'Inactive' | 'Suspended' | 'ACTIVE' | 'INACTIVE';
   settings?: Record<string, any> | string;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
+  memberCount?: number;
+  activeMemberCount?: number;
 }
 
 export interface OrganizationDomain {
@@ -81,9 +86,14 @@ export interface OrganizationMember {
   id: string;
   organizationId: string;
   userId: string;
-  role: UserRole;
-  status: 'Active' | 'Inactive';
+  role: UserRole | string;
+  status: 'Active' | 'Inactive' | 'ACTIVE' | 'INACTIVE';
   joinedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
   user?: User;
   organization?: Organization;
 }

@@ -213,9 +213,29 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
   req.workspace = workspace;
 
   // 5. Validate Workspace Membership
-  const member = db.workspaceMembers.find(
+  let member = db.workspaceMembers.find(
     m => m.workspaceId === workspace!.id && m.userId === user.id
   );
+
+  if (!member) {
+    // Auto-associate active member of the organization or tenant to the organization's workspace
+    const hasOrgMembership = db.organizationMembers.some(
+      om => om.organizationId === workspace!.tenantId && om.userId === user.id && ((om.status || '').toUpperCase() === 'ACTIVE' || om.status === 'Active')
+    );
+    if (hasOrgMembership || user.tenantId === workspace!.tenantId) {
+      member = {
+        id: `wm-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+        workspaceId: workspace!.id,
+        tenantId: workspace!.tenantId,
+        userId: user.id,
+        role: user.role || 'Member',
+        status: 'Active',
+        joinedAt: new Date().toISOString()
+      };
+      db.workspaceMembers.push(member);
+      db.persistWorkspaceMember(member).catch(console.error);
+    }
+  }
 
   if (!member || member.status !== 'Active') {
     return res.status(403).json({

@@ -40,7 +40,7 @@ function checkAccess(req: AuthenticatedRequest, channelId?: string, conversation
   }
 
   if (conversationId) {
-    const conv = db.conversations.find(c => c.id === conversationId && c.tenantId === tenantId);
+    const conv = db.conversations.find(c => c.id === conversationId);
     if (!conv) {
       return { allowed: false, error: 'Conversación no encontrada', status: 404 };
     }
@@ -64,7 +64,12 @@ messagesRouter.get('/', authenticate, requirePermission('messages.read'), (req: 
     return res.status(access.status || 403).json({ success: false, message: access.error });
   }
 
-  let filtered = db.messages.filter(m => m.tenantId === tenantId && !m.isDeleted);
+  let filtered = db.messages.filter(m => {
+    if (m.isDeleted) return false;
+    if (conversationId) return m.conversationId === conversationId;
+    if (channelId) return m.channelId === channelId && m.tenantId === tenantId;
+    return m.tenantId === tenantId;
+  });
 
   if (parentMessageId) {
     filtered = filtered.filter(m => m.parentMessageId === parentMessageId || m.threadRootMessageId === parentMessageId);

@@ -1,5 +1,5 @@
 /**
- * CollabPulse Enterprise Call Debug Logger
+ * Nexora Enterprise Call Debug Logger
  * Provides structured logging for WebRTC call lifecycle, media acquisition,
  * SDP offer/answer exchange, ICE candidates, and connection states.
  * 

@@ -196,7 +196,7 @@ export const CalendarView: React.FC = () => {
                   type="text"
                   value={newLocation}
                   onChange={e => setNewLocation(e.target.value)}
-                  placeholder="Ej: Sala Virtual CollabPulse o Oficina Principal"
+                  placeholder="Ej: Sala Virtual Nexora o Oficina Principal"
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none"
                 />
               </div>

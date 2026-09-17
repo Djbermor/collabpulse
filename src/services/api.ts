@@ -10,11 +10,11 @@ class ApiClient {
 
   constructor() {
     if (typeof window !== 'undefined') {
-      const savedTenant = localStorage.getItem('collab_tenant_id');
-      const savedWorkspace = localStorage.getItem('collab_workspace_id');
-      const savedUser = localStorage.getItem('collab_user_id');
-      const savedToken = localStorage.getItem('collab_token');
-      const savedRefreshToken = localStorage.getItem('collab_refresh_token');
+      const savedTenant = localStorage.getItem('nexora_tenant_id') || localStorage.getItem('collab_tenant_id');
+      const savedWorkspace = localStorage.getItem('nexora_workspace_id') || localStorage.getItem('collab_workspace_id');
+      const savedUser = localStorage.getItem('nexora_user_id') || localStorage.getItem('collab_user_id');
+      const savedToken = localStorage.getItem('nexora_token') || localStorage.getItem('collab_token');
+      const savedRefreshToken = localStorage.getItem('nexora_refresh_token') || localStorage.getItem('collab_refresh_token');
 
       if (savedTenant) this.tenantId = savedTenant;
       if (savedWorkspace) this.workspaceId = savedWorkspace;
@@ -26,7 +26,10 @@ class ApiClient {
 
   public setTenantId(tenantId: string) {
     this.tenantId = tenantId;
-    if (typeof window !== 'undefined') localStorage.setItem('collab_tenant_id', tenantId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nexora_tenant_id', tenantId);
+      localStorage.setItem('collab_tenant_id', tenantId);
+    }
   }
 
   public getTenantId(): string {
@@ -35,7 +38,10 @@ class ApiClient {
 
   public setWorkspaceId(workspaceId: string) {
     this.workspaceId = workspaceId;
-    if (typeof window !== 'undefined') localStorage.setItem('collab_workspace_id', workspaceId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nexora_workspace_id', workspaceId);
+      localStorage.setItem('collab_workspace_id', workspaceId);
+    }
   }
 
   public getWorkspaceId(): string {
@@ -44,7 +50,10 @@ class ApiClient {
 
   public setUserId(userId: string) {
     this.userId = userId;
-    if (typeof window !== 'undefined') localStorage.setItem('collab_user_id', userId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nexora_user_id', userId);
+      localStorage.setItem('collab_user_id', userId);
+    }
   }
 
   public getUserId(): string {
@@ -54,8 +63,13 @@ class ApiClient {
   public setToken(token: string | null) {
     this.token = token;
     if (typeof window !== 'undefined') {
-      if (token) localStorage.setItem('collab_token', token);
-      else localStorage.removeItem('collab_token');
+      if (token) {
+        localStorage.setItem('nexora_token', token);
+        localStorage.setItem('collab_token', token);
+      } else {
+        localStorage.removeItem('nexora_token');
+        localStorage.removeItem('collab_token');
+      }
     }
   }
 
@@ -66,8 +80,13 @@ class ApiClient {
   public setRefreshToken(token: string | null) {
     this.refreshToken = token;
     if (typeof window !== 'undefined') {
-      if (token) localStorage.setItem('collab_refresh_token', token);
-      else localStorage.removeItem('collab_refresh_token');
+      if (token) {
+        localStorage.setItem('nexora_refresh_token', token);
+        localStorage.setItem('collab_refresh_token', token);
+      } else {
+        localStorage.removeItem('nexora_refresh_token');
+        localStorage.removeItem('collab_refresh_token');
+      }
     }
   }
 
@@ -86,10 +105,15 @@ class ApiClient {
     this.tenantId = '';
     this.workspaceId = '';
     if (typeof window !== 'undefined') {
+      localStorage.removeItem('nexora_token');
       localStorage.removeItem('collab_token');
+      localStorage.removeItem('nexora_refresh_token');
       localStorage.removeItem('collab_refresh_token');
+      localStorage.removeItem('nexora_user_id');
       localStorage.removeItem('collab_user_id');
+      localStorage.removeItem('nexora_tenant_id');
       localStorage.removeItem('collab_tenant_id');
+      localStorage.removeItem('nexora_workspace_id');
       localStorage.removeItem('collab_workspace_id');
     }
   }
@@ -311,27 +335,9 @@ class ApiClient {
     });
   }
 
-  // --- Organizations & Multi-Tenant ---
-  public getOrganizations() {
-    return this.request<any[]>('/organizations');
-  }
-
-  public createOrganization(payload: { name: string; slug?: string; type?: string; industry?: string; primaryDomain?: string; logoUrl?: string }) {
-    return this.request('/organizations', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  }
-
+  // --- Organizations & Domains (Domain lookup) ---
   public getOrganization(id: string) {
     return this.request(`/organizations/${id}`);
-  }
-
-  public updateOrganization(id: string, payload: any) {
-    return this.request(`/organizations/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload)
-    });
   }
 
   public addOrganizationDomain(id: string, payload: { domain: string; isPrimary?: boolean }) {
@@ -344,12 +350,6 @@ class ApiClient {
   public deleteOrganizationDomain(id: string, domainId: string) {
     return this.request(`/organizations/${id}/domains/${domainId}`, {
       method: 'DELETE'
-    });
-  }
-
-  public switchOrganization(id: string) {
-    return this.request(`/organizations/${id}/switch`, {
-      method: 'POST'
     });
   }
 
@@ -883,6 +883,81 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify(permissions)
     });
+  }
+
+  // --- Organizations & Collaborators (Nexora Phase 3) ---
+  public getOrganizations(all: boolean = false) {
+    return this.request<any[]>(`/organizations${all ? '?all=true' : ''}`);
+  }
+
+  public createOrganization(payload: { name: string; slug?: string; type?: string; industry?: string; primaryDomain?: string; logoUrl?: string; settings?: any }) {
+    return this.request('/organizations', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  public updateOrganization(id: string, payload: { name?: string; industry?: string; logoUrl?: string; primaryDomain?: string; settings?: any; status?: string }) {
+    return this.request(`/organizations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  public deactivateOrganization(id: string) {
+    return this.updateOrganization(id, { status: 'INACTIVE' });
+  }
+
+  public activateOrganization(id: string) {
+    return this.updateOrganization(id, { status: 'Active' });
+  }
+
+  public getOrganizationMembers(orgId: string) {
+    return this.request<any[]>(`/organizations/${orgId}/members`);
+  }
+
+  public addOrganizationMember(orgId: string, userId: string, role: string = 'Member') {
+    return this.request(`/organizations/${orgId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userId, role })
+    });
+  }
+
+  public removeOrganizationMember(orgId: string, userId: string) {
+    return this.request(`/organizations/${orgId}/members/${userId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  public switchOrganization(orgId: string) {
+    return this.request(`/organizations/${orgId}/switch`, {
+      method: 'POST'
+    });
+  }
+
+  public adminAssignUserOrganization(userId: string, organizationId: string, role: string = 'Member') {
+    return this.request(`/admin/users/${userId}/organizations`, {
+      method: 'POST',
+      body: JSON.stringify({ organizationId, role })
+    });
+  }
+
+  public adminRemoveUserOrganization(userId: string, organizationId: string) {
+    return this.request(`/admin/users/${userId}/organizations/${organizationId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  public adminUpdateUserStatus(userId: string, accountStatus: 'ACTIVE' | 'INACTIVE' | 'PENDING_ACTIVATION' | 'Suspended' | 'Active' | 'Inactive') {
+    return this.request(`/admin/users/${userId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ accountStatus })
+    });
+  }
+
+  // --- Global Collaborator Directory ---
+  public searchDirectory(q: string = '') {
+    return this.request<any[]>(`/users/search?q=${encodeURIComponent(q)}`);
   }
 }
 

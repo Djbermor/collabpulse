@@ -39,7 +39,7 @@ const DisabledFeatureFallback: React.FC<{ name: string }> = ({ name }) => {
       </div>
       <h3 className="text-base font-bold text-slate-100 mb-2">Funcionalidad no disponible en esta versión</h3>
       <p className="text-xs text-slate-400 max-w-md mb-6 leading-relaxed">
-        El módulo <span className="font-semibold text-slate-200">{name}</span> está actualmente deshabilitado en esta versión MVP de CollabPulse. Puede ser habilitado por un administrador desde el panel de control.
+        El módulo <span className="font-semibold text-slate-200">{name}</span> está actualmente deshabilitado en esta versión MVP de Nexora. Puede ser habilitado por un administrador desde el panel de control.
       </p>
       <button
         onClick={() => setActiveView('channel')}
@@ -104,7 +104,7 @@ const MainLayout: React.FC = () => {
     return (
       <div className="h-screen w-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-3">
         <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-        <p className="text-xs font-medium tracking-wide">Cargando sesión de CollabPulse Enterprise...</p>
+        <p className="text-xs font-medium tracking-wide">Cargando sesión de Nexora Enterprise...</p>
       </div>
     );
   }

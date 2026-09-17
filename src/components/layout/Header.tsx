@@ -103,9 +103,9 @@ export const Header: React.FC = () => {
           </div>
           <div className="hidden sm:flex flex-col">
             <span className="font-extrabold text-sm tracking-tight text-white flex items-center gap-1.5">
-              CollabPulse
+              Nexora
               <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                SaaS
+                Enterprise
               </span>
             </span>
           </div>

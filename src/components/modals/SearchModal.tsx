@@ -34,16 +34,34 @@ export const SearchModal: React.FC = () => {
 
   useEffect(() => {
     if (!query.trim()) {
-      setResults({ messages: [], channels: [], tasks: [], files: [] });
+      setResults({ messages: [], channels: [], tasks: [], files: [], users: [] });
       return;
     }
 
     const timer = setTimeout(async () => {
       setLoading(true);
-      const res = await api.globalSearch(query.trim());
-      if (res.success && res.data) {
-        setResults(res.data);
+      const [searchRes, directoryRes] = await Promise.all([
+        api.globalSearch(query.trim()),
+        api.searchDirectory(query.trim())
+      ]);
+
+      const usersMap = new Map();
+      if (directoryRes.success && directoryRes.data) {
+        directoryRes.data.forEach((u: any) => usersMap.set(u.id, u));
       }
+      if (searchRes.success && searchRes.data?.users) {
+        searchRes.data.users.forEach((u: any) => {
+          if (!usersMap.has(u.id)) usersMap.set(u.id, u);
+        });
+      }
+
+      setResults({
+        messages: searchRes.data?.messages || [],
+        channels: searchRes.data?.channels || [],
+        tasks: searchRes.data?.tasks || [],
+        files: searchRes.data?.files || [],
+        users: Array.from(usersMap.values())
+      });
       setLoading(false);
     }, 250);
 
@@ -78,7 +96,7 @@ export const SearchModal: React.FC = () => {
             autoFocus
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Buscar mensajes, canales, colaboradores, archivos..."
+            placeholder="Buscar mensajes, canales, colaboradores de Nexora, archivos..."
             className="w-full bg-transparent border-none text-slate-100 placeholder-slate-500 focus:outline-none text-sm"
           />
           <button
@@ -91,11 +109,11 @@ export const SearchModal: React.FC = () => {
 
         {/* Search Results Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-          {loading && <div className="py-8 text-center text-slate-500">Buscando en la organización...</div>}
+          {loading && <div className="py-8 text-center text-slate-500">Buscando en Nexora...</div>}
 
           {!loading && !query && (
             <div className="py-12 text-center text-slate-500 space-y-2">
-              <p>Escribe para buscar instantáneamente en todos los canales, mensajes, tareas y archivos.</p>
+              <p>Escribe para buscar instantáneamente en todos los canales, colaboradores y mensajes.</p>
               <div className="flex items-center justify-center gap-2 text-[11px] text-slate-400">
                 <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700">from:nombre</span>
                 <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700">in:canal</span>
@@ -105,12 +123,12 @@ export const SearchModal: React.FC = () => {
 
           {!loading && query && (
             <>
-              {/* Colaboradores encontrados */}
-              {results.users && results.users.length > 0 && (
+              {/* Colaboradores encontrados (Directorio Global) */}
+              {results.users.length > 0 && (
                 <div>
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
                     <User className="w-3.5 h-3.5 text-indigo-400" />
-                    Colaboradores ({results.users.length})
+                    Directorio de Colaboradores ({results.users.length})
                   </div>
                   <div className="space-y-1">
                     {results.users.map((u: any) => (
@@ -120,19 +138,28 @@ export const SearchModal: React.FC = () => {
                         className="p-2 rounded-lg hover:bg-slate-800/80 cursor-pointer flex items-center justify-between group transition-colors"
                       >
                         <div className="flex items-center gap-2.5">
-                          {u.avatarUrl ? (
-                            <img src={u.avatarUrl} alt={u.firstName} className="w-6 h-6 rounded-full object-cover" />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-[10px] text-slate-300">
-                              {(u.displayName || u.firstName || 'U').substring(0, 2)}
-                            </div>
-                          )}
+                          <img
+                            src={u.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80'}
+                            className="w-7 h-7 rounded-full object-cover border border-slate-700"
+                            alt=""
+                          />
                           <div>
-                            <span className="font-semibold text-slate-200 group-hover:text-indigo-300">
-                              {u.displayName || `${u.firstName} ${u.lastName}`}
-                            </span>
-                            <span className="text-slate-500 text-[11px] ml-2">
-                              {u.jobTitle || u.role} • {u.email}
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-slate-200 group-hover:text-indigo-300">
+                                {u.displayName || `${u.firstName} ${u.lastName}`}
+                              </span>
+                              {u.organizations && u.organizations.length > 0 && (
+                                <div className="flex items-center gap-1">
+                                  {u.organizations.map((org: any) => (
+                                    <span key={org.id} className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-950/80 border border-indigo-800 text-indigo-300">
+                                      {org.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-slate-500 text-[11px]">
+                              {u.jobTitle || 'Colaborador'} • {u.email}
                             </span>
                           </div>
                         </div>

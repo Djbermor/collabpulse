@@ -1,4 +1,4 @@
-// CollabPulse Desktop & Audio Notification Service
+// Nexora Desktop & Audio Notification Service
 
 class DesktopNotificationService {
   private audioCtx: AudioContext | null = null;
@@ -59,7 +59,7 @@ class DesktopNotificationService {
     try {
       const notif = new Notification(title, {
         body: options?.body || '',
-        icon: options?.icon || '/collabpulse-icon.svg',
+        icon: options?.icon || '/nexora-icon.svg',
         tag: options?.tag,
         requireInteraction: options?.requireInteraction ?? false
       });

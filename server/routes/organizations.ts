@@ -61,31 +61,38 @@ organizationsRouter.get('/lookup/by-domain', async (req, res) => {
  */
 organizationsRouter.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.user!.id;
+  const userRole = req.user!.role;
+  const returnAll = req.query.all === 'true' && (userRole === 'Admin' || userRole === 'Owner');
 
   try {
     // 1. Get memberships for this user
-    const memberships = db.organizationMembers.filter(m => m.userId === userId && m.status === 'Active');
-    const orgIds = new Set(memberships.map(m => m.organizationId));
+    const memberships = db.organizationMembers.filter(m => m.userId === userId && (m.status === 'Active' || m.status === 'ACTIVE'));
+    const userOrgIds = new Set(memberships.map(m => m.organizationId));
 
     // Also include user's tenantId if not already in memberships (backward compatibility)
     if (req.user!.tenantId) {
-      orgIds.add(req.user!.tenantId);
+      userOrgIds.add(req.user!.tenantId);
     }
 
-    // 2. Fetch full organization details
-    const userOrgs = db.organizations
-      .filter(o => orgIds.has(o.id) && o.status !== 'Suspended')
-      .map(o => {
-        const mem = memberships.find(m => m.organizationId === o.id);
-        const domains = db.organizationDomains.filter(d => d.organizationId === o.id);
-        return {
-          ...o,
-          role: mem ? mem.role : req.user!.role,
-          domains: domains.map(d => ({ id: d.id, domain: d.domain, isPrimary: d.isPrimary, isVerified: d.isVerified }))
-        };
-      });
+    // 2. Fetch organization details
+    const orgsToList = returnAll ? db.organizations : db.organizations.filter(o => userOrgIds.has(o.id));
 
-    return res.json({ success: true, data: userOrgs });
+    const result = orgsToList.map(o => {
+      const mem = memberships.find(m => m.organizationId === o.id);
+      const domains = db.organizationDomains.filter(d => d.organizationId === o.id);
+      const allMembers = db.organizationMembers.filter(m => m.organizationId === o.id);
+      const activeMembers = allMembers.filter(m => m.status === 'Active' || m.status === 'ACTIVE');
+      return {
+        ...o,
+        role: mem ? mem.role : (userRole || 'Member'),
+        memberCount: activeMembers.length,
+        activeMemberCount: activeMembers.length,
+        totalMemberCount: allMembers.length,
+        domains: domains.map(d => ({ id: d.id, domain: d.domain, isPrimary: d.isPrimary, isVerified: d.isVerified }))
+      };
+    });
+
+    return res.json({ success: true, data: result });
   } catch (error: any) {
     console.error('[Organizations] list error:', error);
     return res.status(500).json({ success: false, message: 'Error listando organizaciones' });
@@ -128,6 +135,7 @@ organizationsRouter.post('/', authenticate, async (req: AuthenticatedRequest, re
     primaryDomain: domainStr,
     status: 'Active',
     settings: settings || {},
+    createdBy: user.id,
     createdAt: now,
     updatedAt: now
   };
@@ -310,12 +318,23 @@ organizationsRouter.patch('/:id', authenticate, async (req: AuthenticatedRequest
     return res.status(404).json({ success: false, message: 'Organización no encontrada' });
   }
 
-  const { name, industry, logoUrl, primaryDomain, settings } = req.body;
+  const { name, industry, logoUrl, primaryDomain, settings, status } = req.body;
   if (name) org.name = sanitizeText(name);
   if (industry) org.industry = sanitizeText(industry);
   if (logoUrl !== undefined) org.logoUrl = logoUrl;
   if (primaryDomain) org.primaryDomain = primaryDomain.trim().toLowerCase();
   if (settings) org.settings = settings;
+  if (status) {
+    if (status === 'INACTIVE' || status === 'Inactive') {
+      org.status = 'INACTIVE';
+      org.deactivatedAt = new Date().toISOString();
+      org.deactivatedBy = userId;
+    } else if (status === 'Active' || status === 'ACTIVE') {
+      org.status = 'Active';
+      org.deactivatedAt = undefined;
+      org.deactivatedBy = undefined;
+    }
+  }
   org.updatedAt = new Date().toISOString();
 
   await db.persistOrganization(org);
@@ -427,4 +446,142 @@ organizationsRouter.post('/:id/switch', authenticate, async (req: AuthenticatedR
       role: membership ? membership.role : (user?.role || 'Member')
     }
   });
+});
+
+/**
+ * GET /api/v1/organizations/:id/members
+ * List members of an organization
+ */
+organizationsRouter.get('/:id/members', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const orgId = req.params.id;
+  const org = db.organizations.find(o => o.id === orgId);
+  if (!org) {
+    return res.status(404).json({ success: false, message: 'Organización no encontrada' });
+  }
+
+  const members = db.organizationMembers.filter(m => m.organizationId === orgId);
+  const data = members.map(m => {
+    const u = db.users.find(usr => usr.id === m.userId);
+    return {
+      id: m.id,
+      organizationId: m.organizationId,
+      userId: m.userId,
+      role: m.role,
+      status: m.status,
+      joinedAt: m.joinedAt,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+      createdBy: m.createdBy,
+      deactivatedAt: m.deactivatedAt,
+      deactivatedBy: m.deactivatedBy,
+      user: u ? {
+        id: u.id,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        displayName: u.displayName,
+        email: u.email,
+        jobTitle: u.jobTitle,
+        avatarUrl: u.avatarUrl,
+        accountStatus: u.accountStatus,
+        status: u.status
+      } : null
+    };
+  });
+
+  return res.json({ success: true, data });
+});
+
+/**
+ * POST /api/v1/organizations/:id/members
+ * Add a member to an organization
+ */
+organizationsRouter.post('/:id/members', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const orgId = req.params.id;
+  const { userId, role = 'Member' } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: 'El parámetro userId es requerido' });
+  }
+
+  const org = db.organizations.find(o => o.id === orgId);
+  if (!org) {
+    return res.status(404).json({ success: false, message: 'Organización no encontrada' });
+  }
+
+  // REGLA CRÍTICA: No se pueden agregar miembros a una organización inactiva
+  if (org.status === 'INACTIVE' || org.status === 'Inactive') {
+    return res.status(400).json({
+      success: false,
+      message: 'No se pueden agregar miembros a una organización inactiva',
+      code: 'ORGANIZATION_INACTIVE'
+    });
+  }
+
+  const user = db.users.find(u => u.id === userId);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+  }
+
+  const existingMember = db.organizationMembers.find(m => m.organizationId === orgId && m.userId === userId);
+  const now = new Date().toISOString();
+
+  if (existingMember) {
+    if (existingMember.status === 'Active' || existingMember.status === 'ACTIVE') {
+      return res.status(409).json({ success: false, message: 'El usuario ya es miembro activo de esta organización' });
+    }
+    // Reactivate membership
+    existingMember.status = 'Active';
+    existingMember.role = role;
+    existingMember.deactivatedAt = undefined;
+    existingMember.deactivatedBy = undefined;
+    existingMember.updatedAt = now;
+    await db.persistOrganizationMember(existingMember);
+    return res.json({ success: true, message: 'Membresía reactivada exitosamente', data: existingMember });
+  }
+
+  const newMember: OrganizationMember = {
+    id: `om-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+    organizationId: orgId,
+    userId,
+    role,
+    status: 'Active',
+    joinedAt: now,
+    createdBy: req.user!.id,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  db.organizationMembers.push(newMember);
+  await db.persistOrganizationMember(newMember);
+
+  return res.status(201).json({
+    success: true,
+    message: 'Miembro asignado exitosamente a la organización',
+    data: newMember
+  });
+});
+
+/**
+ * DELETE /api/v1/organizations/:id/members/:userId
+ * Soft-deactivate a member from an organization
+ */
+organizationsRouter.delete('/:id/members/:userId', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const { id: orgId, userId } = req.params;
+  const org = db.organizations.find(o => o.id === orgId);
+  if (!org) {
+    return res.status(404).json({ success: false, message: 'Organización no encontrada' });
+  }
+
+  await db.removeOrganizationMember(orgId, userId, req.user!.id);
+  return res.json({ success: true, message: 'Miembro desactivado de la organización exitosamente' });
+});
+
+/**
+ * PATCH /api/v1/organizations/:id/members/:userId/deactivate
+ * Soft-deactivate a member from an organization
+ */
+organizationsRouter.patch('/:id/members/:userId/deactivate', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const { id: orgId, userId } = req.params;
+  await db.removeOrganizationMember(orgId, userId, req.user!.id);
+  return res.json({ success: true, message: 'Miembro desactivado de la organización exitosamente' });
 });

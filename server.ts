@@ -18,6 +18,7 @@ import { signalingRouter } from './server/routes/signaling';
 import { callsRouter } from './server/routes/calls';
 import { groupCallsRouter } from './server/routes/groupCalls';
 import { organizationsRouter } from './server/routes/organizations';
+import { usersRouter } from './server/routes/users';
 import { correlationMiddleware, requireFeature } from './server/middleware';
 import { db } from './server/db';
 import { pool } from './src/db/index';
@@ -180,6 +181,7 @@ app.use('/api/v1/realtime/signal', signalingRouter);
 app.use('/api/v1/calls', requireFeature('calls'), callsRouter);
 app.use('/api/v1/group-calls', requireFeature('videoCalls'), groupCallsRouter);
 app.use('/api/v1/organizations', organizationsRouter);
+app.use('/api/v1/users', usersRouter);
 
 // Serve physical user uploads statically
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
@@ -223,7 +225,7 @@ async function startServer() {
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`CollabPulse Server running on http://0.0.0.0:${PORT} (env: ${process.env.NODE_ENV || 'development'})`);
+    console.log(`Nexora Server running on http://0.0.0.0:${PORT} (env: ${process.env.NODE_ENV || 'development'})`);
   });
 
   // Calendar Reminders Background Worker

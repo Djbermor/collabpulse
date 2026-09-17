@@ -447,7 +447,7 @@ class CollabDatabase {
         entity: a.resource,
         entityId: a.resourceId || '',
         ipAddress: a.ipAddress || '127.0.0.1',
-        userAgent: 'CollabPulse-Web/1.0',
+        userAgent: 'Nexora-Web/1.0',
         metadata: a.details ? JSON.parse(a.details) : {},
         createdAt: a.createdAt.toISOString()
       }));
@@ -464,7 +464,7 @@ class CollabDatabase {
         browser: s.userAgent || 'Chrome',
         os: 'Windows',
         ipAddress: s.ipAddress || '127.0.0.1',
-        userAgent: s.userAgent || 'CollabPulse',
+        userAgent: s.userAgent || 'Nexora',
         createdAt: s.createdAt.toISOString(),
         lastUsedAt: s.lastActiveAt.toISOString(),
         expiresAt: s.expiresAt.toISOString()
@@ -511,6 +511,9 @@ class CollabDatabase {
           primaryDomain: o.primary_domain || '',
           status: o.status || 'Active',
           settings: typeof o.settings === 'string' ? o.settings : JSON.stringify(o.settings || {}),
+          createdBy: o.created_by || undefined,
+          deactivatedAt: o.deactivated_at ? new Date(o.deactivated_at).toISOString() : undefined,
+          deactivatedBy: o.deactivated_by || undefined,
           createdAt: o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString(),
           updatedAt: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString()
         }));
@@ -533,7 +536,12 @@ class CollabDatabase {
           userId: m.user_id,
           role: m.role || 'Member',
           status: m.status || 'Active',
-          joinedAt: m.joined_at ? new Date(m.joined_at).toISOString() : new Date().toISOString()
+          joinedAt: m.joined_at ? new Date(m.joined_at).toISOString() : new Date().toISOString(),
+          createdBy: m.created_by || undefined,
+          deactivatedAt: m.deactivated_at ? new Date(m.deactivated_at).toISOString() : undefined,
+          deactivatedBy: m.deactivated_by || undefined,
+          createdAt: m.created_at ? new Date(m.created_at).toISOString() : (m.joined_at ? new Date(m.joined_at).toISOString() : new Date().toISOString()),
+          updatedAt: m.updated_at ? new Date(m.updated_at).toISOString() : (m.joined_at ? new Date(m.joined_at).toISOString() : new Date().toISOString())
         }));
 
         const settingsRes = await pool.query('SELECT * FROM organization_settings');
@@ -697,7 +705,7 @@ class CollabDatabase {
       entity,
       entityId,
       ipAddress: ip,
-      userAgent: 'CollabPulse-Web/1.0',
+      userAgent: 'Nexora-Web/1.0',
       metadata,
       createdAt: new Date().toISOString()
     };
@@ -823,6 +831,10 @@ class CollabDatabase {
         if (updates.accountStatus === 'Deleted') {
           updatePayload.deletedAt = new Date();
           updatePayload.isActive = false;
+        } else if (updates.accountStatus === 'INACTIVE' || updates.accountStatus === 'Inactive' || updates.accountStatus === 'Suspended' || updates.accountStatus === 'PENDING_ACTIVATION') {
+          updatePayload.isActive = false;
+        } else if (updates.accountStatus === 'ACTIVE' || updates.accountStatus === 'Active') {
+          updatePayload.isActive = true;
         }
       }
       if (updates.isActive !== undefined) updatePayload.isActive = updates.isActive;
@@ -1510,8 +1522,8 @@ class CollabDatabase {
   public async persistOrganization(org: Organization) {
     try {
       await pool.query(
-        `INSERT INTO organizations (id, name, slug, type, industry, logo_url, primary_domain, status, settings, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO organizations (id, name, slug, type, industry, logo_url, primary_domain, status, settings, created_by, deactivated_at, deactivated_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name,
            slug = EXCLUDED.slug,
@@ -1521,11 +1533,16 @@ class CollabDatabase {
            primary_domain = EXCLUDED.primary_domain,
            status = EXCLUDED.status,
            settings = EXCLUDED.settings,
+           deactivated_at = EXCLUDED.deactivated_at,
+           deactivated_by = EXCLUDED.deactivated_by,
            updated_at = NOW()`,
         [
           org.id, org.name, org.slug, org.type || 'Enterprise', org.industry || 'Technology',
           org.logoUrl || null, org.primaryDomain || null, org.status || 'Active',
           typeof org.settings === 'string' ? org.settings : JSON.stringify(org.settings || {}),
+          org.createdBy || null,
+          org.deactivatedAt ? new Date(org.deactivatedAt) : null,
+          org.deactivatedBy || null,
           new Date(org.createdAt), new Date(org.updatedAt)
         ]
       );
@@ -1573,21 +1590,45 @@ class CollabDatabase {
   public async persistOrganizationMember(om: OrganizationMember) {
     try {
       await pool.query(
-        `INSERT INTO organization_members (id, organization_id, user_id, role, status, joined_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO organization_members (id, organization_id, user_id, role, status, joined_at, created_by, deactivated_at, deactivated_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (id) DO UPDATE SET
            role = EXCLUDED.role,
-           status = EXCLUDED.status`,
-        [om.id, om.organizationId, om.userId, om.role, om.status, new Date(om.joinedAt)]
+           status = EXCLUDED.status,
+           deactivated_at = EXCLUDED.deactivated_at,
+           deactivated_by = EXCLUDED.deactivated_by,
+           updated_at = NOW()`,
+        [
+          om.id, om.organizationId, om.userId, om.role, om.status,
+          new Date(om.joinedAt),
+          om.createdBy || null,
+          om.deactivatedAt ? new Date(om.deactivatedAt) : null,
+          om.deactivatedBy || null,
+          om.createdAt ? new Date(om.createdAt) : new Date(),
+          om.updatedAt ? new Date(om.updatedAt) : new Date()
+        ]
       );
     } catch (error) {
       console.error('[PostgreSQL] persistOrganizationMember error:', error);
     }
   }
 
-  public async removeOrganizationMember(orgId: string, userId: string) {
+  public async removeOrganizationMember(orgId: string, userId: string, deactivatedBy?: string) {
     try {
-      await pool.query('DELETE FROM organization_members WHERE organization_id = $1 AND user_id = $2', [orgId, userId]);
+      const now = new Date().toISOString();
+      await pool.query(
+        `UPDATE organization_members 
+         SET status = 'INACTIVE', deactivated_at = NOW(), deactivated_by = $3, updated_at = NOW() 
+         WHERE organization_id = $1 AND user_id = $2`,
+        [orgId, userId, deactivatedBy || null]
+      );
+      const member = this.organizationMembers.find(m => m.organizationId === orgId && m.userId === userId);
+      if (member) {
+        member.status = 'INACTIVE';
+        member.deactivatedAt = now;
+        member.deactivatedBy = deactivatedBy;
+        member.updatedAt = now;
+      }
     } catch (error) {
       console.error('[PostgreSQL] removeOrganizationMember error:', error);
     }

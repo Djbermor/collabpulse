@@ -39,18 +39,132 @@ import { useApp } from '../../context/AppContext';
 import { AuditLog, UserRole, FeaturePermissions } from '../../types';
 import { api } from '../../services/api';
 
+const featureDefinitions: {
+  key: keyof FeaturePermissions;
+  name: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  category: 'core' | 'extended';
+}[] = [
+  {
+    key: 'messaging',
+    name: 'Mensajería',
+    description: 'Conversaciones directas 1 a 1 y mensajería en tiempo real.',
+    icon: MessageSquare,
+    category: 'core'
+  },
+  {
+    key: 'channels',
+    name: 'Canales',
+    description: 'Creación, consulta y mensajería en canales públicos y privados.',
+    icon: Hash,
+    category: 'core'
+  },
+  {
+    key: 'groups',
+    name: 'Grupos',
+    description: 'Creación, asignación de miembros y mensajería de grupos colaborativos.',
+    icon: Users,
+    category: 'core'
+  },
+  {
+    key: 'tasks',
+    name: 'Tablero de Tareas',
+    description: 'Tablero Kanban corporativo, asignaciones y estados de trabajo.',
+    icon: CheckSquare,
+    category: 'extended'
+  },
+  {
+    key: 'calendar',
+    name: 'Calendario',
+    description: 'Eventos corporativos, agendamiento y visualización de reuniones.',
+    icon: Calendar,
+    category: 'extended'
+  },
+  {
+    key: 'calls',
+    name: 'Llamadas',
+    description: 'Llamadas de voz 1 a 1 y señalización SSE en tiempo real.',
+    icon: Phone,
+    category: 'extended'
+  },
+  {
+    key: 'videoCalls',
+    name: 'Videollamadas',
+    description: 'Videollamadas HD, salas WebRTC/LiveKit SFU y pantalla compartida.',
+    icon: Video,
+    category: 'extended'
+  },
+  {
+    key: 'files',
+    name: 'Archivos & Adjuntos',
+    description: 'Gestor documental empresarial y almacenamiento central de archivos.',
+    icon: FileText,
+    category: 'extended'
+  },
+  {
+    key: 'saved',
+    name: 'Guardados',
+    description: 'Marcado rápido de mensajes y notas importantes para consulta rápida.',
+    icon: Bookmark,
+    category: 'extended'
+  },
+  {
+    key: 'activity',
+    name: 'Actividad',
+    description: 'Centro de notificaciones y registro cronológico de actividad de equipo.',
+    icon: Bell,
+    category: 'extended'
+  }
+];
+
 export const AdminView: React.FC = () => {
   const { currentTenant, currentWorkspace, currentUser, addToast, features, updateFeaturePermissions } = useApp();
-  const [activeTab, setActiveTab] = useState<'permissions' | 'stats' | 'users' | 'audit' | 'settings'>('permissions');
+  const [activeTab, setActiveTab] = useState<'permissions' | 'organizations' | 'users' | 'pending' | 'stats' | 'audit' | 'settings'>('permissions');
   const [updatingFeature, setUpdatingFeature] = useState<string | null>(null);
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
+  const [organizations, setOrganizations] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditFilter, setAuditFilter] = useState('');
   const [wsName, setWsName] = useState(currentWorkspace?.name || '');
   const [wsDesc, setWsDesc] = useState(currentWorkspace?.description || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Modals for CRUD
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [deletingUser, setDeletingUser] = useState<any | null>(null);
+
+  // Organizations Modals & Form
+  const [isCreateOrgModalOpen, setIsCreateOrgModalOpen] = useState(false);
+  const [newOrgName, setNewOrgName] = useState('');
+  const [newOrgSlug, setNewOrgSlug] = useState('');
+  const [newOrgDomain, setNewOrgDomain] = useState('');
+  const [newOrgIndustry, setNewOrgIndustry] = useState('Tecnología / Salud');
+  const [assigningUserOrg, setAssigningUserOrg] = useState<any | null>(null);
+  const [targetOrgIdToAssign, setTargetOrgIdToAssign] = useState('');
+  const [targetOrgRoleToAssign, setTargetOrgRoleToAssign] = useState('Member');
+  const [viewingOrgMembers, setViewingOrgMembers] = useState<any | null>(null);
+  const [orgMembersList, setOrgMembersList] = useState<any[]>([]);
+
+  // Form states for user creation
+  const [newFirstName, setNewFirstName] = useState('');
+  const [newLastName, setNewLastName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newJobTitle, setNewJobTitle] = useState('');
+  const [newRole, setNewRole] = useState<UserRole>('Member');
+  const [newPassword, setNewPassword] = useState('');
+  const [newUserAccountStatus, setNewUserAccountStatus] = useState<'ACTIVE' | 'PENDING_ACTIVATION'>('ACTIVE');
+  const [newUserOrgId, setNewUserOrgId] = useState('');
+
+  // Form states for editing
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editJobTitle, setEditJobTitle] = useState('');
+  const [editRole, setEditRole] = useState<UserRole>('Member');
+  const [editStatus, setEditStatus] = useState<'Active' | 'Suspended' | 'Inactive'>('Active');
 
   const handleToggleFeature = async (key: keyof FeaturePermissions, label: string) => {
     const nextVal = !features[key];
@@ -69,136 +183,22 @@ export const AdminView: React.FC = () => {
     }
   };
 
-  const featureDefinitions: {
-    key: keyof FeaturePermissions;
-    name: string;
-    description: string;
-    icon: React.ComponentType<{ className?: string }>;
-    category: 'core' | 'extended';
-  }[] = [
-    {
-      key: 'messaging',
-      name: 'Mensajería',
-      description: 'Conversaciones directas 1 a 1 y mensajería en tiempo real.',
-      icon: MessageSquare,
-      category: 'core'
-    },
-    {
-      key: 'channels',
-      name: 'Canales',
-      description: 'Creación, consulta y mensajería en canales públicos y privados.',
-      icon: Hash,
-      category: 'core'
-    },
-    {
-      key: 'groups',
-      name: 'Grupos',
-      description: 'Creación, asignación de miembros y mensajería de grupos colaborativos.',
-      icon: Users,
-      category: 'core'
-    },
-    {
-      key: 'tasks',
-      name: 'Tablero de Tareas',
-      description: 'Tablero Kanban corporativo, asignaciones y estados de trabajo.',
-      icon: CheckSquare,
-      category: 'extended'
-    },
-    {
-      key: 'calendar',
-      name: 'Calendario',
-      description: 'Eventos corporativos, agendamiento y visualización de reuniones.',
-      icon: Calendar,
-      category: 'extended'
-    },
-    {
-      key: 'calls',
-      name: 'Llamadas',
-      description: 'Llamadas de voz 1 a 1 y señalización SSE en tiempo real.',
-      icon: Phone,
-      category: 'extended'
-    },
-    {
-      key: 'videoCalls',
-      name: 'Videollamadas',
-      description: 'Videollamadas HD, salas WebRTC/LiveKit SFU y pantalla compartida.',
-      icon: Video,
-      category: 'extended'
-    },
-    {
-      key: 'files',
-      name: 'Archivos & Adjuntos',
-      description: 'Gestor documental empresarial y almacenamiento central de archivos.',
-      icon: FileText,
-      category: 'extended'
-    },
-    {
-      key: 'saved',
-      name: 'Guardados',
-      description: 'Marcado rápido de mensajes y notas importantes para consulta rápida.',
-      icon: Bookmark,
-      category: 'extended'
-    },
-    {
-      key: 'activity',
-      name: 'Actividad',
-      description: 'Centro de notificaciones y registro cronológico de actividad de equipo.',
-      icon: Bell,
-      category: 'extended'
-    }
-  ];
-
-  // Modals for CRUD
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [editingUser, setEditingUser] = useState<any | null>(null);
-  const [deletingUser, setDeletingUser] = useState<any | null>(null);
-
-  // Form states for user creation
-  const [newFirstName, setNewFirstName] = useState('');
-  const [newLastName, setNewLastName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newJobTitle, setNewJobTitle] = useState('');
-  const [newRole, setNewRole] = useState<UserRole>('Member');
-  const [newPassword, setNewPassword] = useState('');
-
-  // Form states for editing
-  const [editFirstName, setEditFirstName] = useState('');
-  const [editLastName, setEditLastName] = useState('');
-  const [editJobTitle, setEditJobTitle] = useState('');
-  const [editRole, setEditRole] = useState<UserRole>('Member');
-  const [editStatus, setEditStatus] = useState<'Active' | 'Suspended' | 'Inactive'>('Active');
-
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [statsRes, usersRes, auditRes] = await Promise.all([
+      const [statsRes, usersRes, auditRes, orgsRes] = await Promise.all([
         api.getAdminStats(),
         api.getAdminUsers(),
-        api.getAuditLogs({ action: auditFilter || undefined })
+        api.getAuditLogs({ action: auditFilter || undefined }),
+        api.getOrganizations(true)
       ]);
 
       if (statsRes.success) setStats(statsRes.data);
       if (usersRes.success && usersRes.data) {
         setUsers(usersRes.data);
-      } else {
-        // Fallback to getWorkspaceMembers
-        const fallback = await api.getWorkspaceMembers();
-        if (fallback.success && fallback.data) {
-          setUsers(fallback.data.map((m: any) => ({
-            id: m.user?.id || m.userId || m.id,
-            memberId: m.id,
-            firstName: m.user?.firstName || m.firstName || 'Usuario',
-            lastName: m.user?.lastName || m.lastName || '',
-            displayName: m.user?.displayName || (m.firstName ? `${m.firstName} ${m.lastName || ''}` : 'Usuario'),
-            email: m.user?.email || m.email || '',
-            role: m.role || m.user?.role || 'Member',
-            jobTitle: m.user?.jobTitle || m.jobTitle || 'Miembro',
-            avatarUrl: m.user?.avatarUrl || m.avatarUrl,
-            status: m.user?.status || m.status || 'Offline',
-            accountStatus: m.user?.accountStatus || (m.status === 'Active' ? 'Active' : 'Inactive'),
-            isActive: m.user?.isActive !== false && m.status === 'Active'
-          })));
-        }
+      }
+      if (orgsRes.success && orgsRes.data) {
+        setOrganizations(orgsRes.data);
       }
       if (auditRes.success) setAuditLogs(auditRes.data);
     } catch (e) {
@@ -223,14 +223,109 @@ export const AdminView: React.FC = () => {
     }
   };
 
-  const handleStatusChange = async (userId: string, newStatus: 'Active' | 'Suspended' | 'Inactive') => {
-    const res = await api.updateAccountStatus(userId, newStatus);
+  const handleStatusChange = async (userId: string, newStatus: string) => {
+    const upper = newStatus.toUpperCase();
+    const resolved = ['ACTIVE', 'INACTIVE', 'PENDING_ACTIVATION', 'SUSPENDED'].includes(upper) ? upper : newStatus;
+    const res = await api.adminUpdateUserStatus(userId, resolved as any);
     if (res.success) {
-      setUsers(prev => prev.map(u => (u.id === userId ? { ...u, accountStatus: newStatus, isActive: newStatus === 'Active' } : u)));
-      addToast(`Estado de cuenta actualizado a ${newStatus}`, 'success');
+      addToast(`Estado de cuenta actualizado a ${resolved}`, 'success');
       loadData();
     } else {
       addToast(res.message || 'Error al actualizar el estado', 'error');
+    }
+  };
+
+  const handleCreateOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newOrgName.trim()) {
+      addToast('El nombre de la organización es requerido', 'error');
+      return;
+    }
+    try {
+      const res = await api.createOrganization({
+        name: newOrgName.trim(),
+        slug: newOrgSlug.trim() || undefined,
+        primaryDomain: newOrgDomain.trim() || undefined,
+        industry: newOrgIndustry.trim() || 'Tecnología / Salud'
+      });
+      if (res.success) {
+        addToast(`Organización "${newOrgName}" creada exitosamente`, 'success');
+        setIsCreateOrgModalOpen(false);
+        setNewOrgName('');
+        setNewOrgSlug('');
+        setNewOrgDomain('');
+        loadData();
+      } else {
+        addToast(res.message || 'Error creando organización', 'error');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Error al crear organización', 'error');
+    }
+  };
+
+  const handleToggleOrgStatus = async (org: any) => {
+    const isCurrentlyActive = (org.status || '').toUpperCase() === 'ACTIVE' || org.status === 'Active';
+    try {
+      const res = isCurrentlyActive
+        ? await api.deactivateOrganization(org.id)
+        : await api.activateOrganization(org.id);
+
+      if (res.success) {
+        addToast(
+          isCurrentlyActive ? `Organización "${org.name}" desactivada` : `Organización "${org.name}" activada`,
+          'success'
+        );
+        loadData();
+      } else {
+        addToast(res.message || 'Error actualizando estado de organización', 'error');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Error al actualizar organización', 'error');
+    }
+  };
+
+  const handleAssignUserOrg = async () => {
+    if (!assigningUserOrg || !targetOrgIdToAssign) return;
+    try {
+      const res = await api.adminAssignUserOrganization(assigningUserOrg.id, targetOrgIdToAssign, targetOrgRoleToAssign);
+      if (res.success) {
+        addToast('Colaborador asignado a la organización exitosamente', 'success');
+        setAssigningUserOrg(null);
+        setTargetOrgIdToAssign('');
+        loadData();
+      } else {
+        addToast(res.message || 'Error asignando organización', 'error');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Error al asignar organización', 'error');
+    }
+  };
+
+  const handleRemoveUserOrg = async (userId: string, orgId: string) => {
+    try {
+      const res = await api.adminRemoveUserOrganization(userId, orgId);
+      if (res.success) {
+        addToast('Colaborador desvinculado de la organización', 'success');
+        loadData();
+      } else {
+        addToast(res.message || 'Error desvinculando de la organización', 'error');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Error al desvincular organización', 'error');
+    }
+  };
+
+  const handleViewOrgMembers = async (org: any) => {
+    setViewingOrgMembers(org);
+    try {
+      const res = await api.getOrganizationMembers(org.id);
+      if (res.success && res.data) {
+        setOrgMembersList(res.data);
+      } else {
+        setOrgMembersList([]);
+      }
+    } catch (err) {
+      setOrgMembersList([]);
     }
   };
 
@@ -248,11 +343,13 @@ export const AdminView: React.FC = () => {
         lastName: newLastName.trim(),
         jobTitle: newJobTitle.trim() || 'Colaborador',
         role: newRole,
-        password: newPassword.trim() || undefined
-      });
+        password: newPassword.trim() || undefined,
+        accountStatus: newUserAccountStatus,
+        organizationId: newUserOrgId || undefined
+      } as any);
 
       if (res.success) {
-        addToast(`Usuario ${newFirstName} ${newLastName} creado exitosamente`, 'success');
+        addToast(`Colaborador ${newFirstName} ${newLastName} registrado exitosamente (${newUserAccountStatus})`, 'success');
         setIsCreateModalOpen(false);
         setNewFirstName('');
         setNewLastName('');
@@ -260,6 +357,8 @@ export const AdminView: React.FC = () => {
         setNewJobTitle('');
         setNewRole('Member');
         setNewPassword('');
+        setNewUserAccountStatus('ACTIVE');
+        setNewUserOrgId('');
         loadData();
       } else {
         addToast(res.message || 'Error al crear usuario', 'error');
@@ -365,20 +464,39 @@ export const AdminView: React.FC = () => {
             <span>Permisos de funcionalidades</span>
           </button>
           <button
+            onClick={() => setActiveTab('organizations')}
+            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'organizations' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Building className="w-3.5 h-3.5" />
+            <span>Organizaciones ({organizations.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'users' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Colaboradores ({users.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('pending')}
+            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'pending' ? 'bg-amber-600 text-white' : 'text-amber-400/90 hover:text-amber-300'
+            }`}
+          >
+            <UserCheck className="w-3.5 h-3.5" />
+            <span>Pendientes ({users.filter(u => (u.accountStatus || '').toUpperCase() === 'PENDING_ACTIVATION').length})</span>
+          </button>
+          <button
             onClick={() => setActiveTab('stats')}
             className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
               activeTab === 'stats' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Métricas
-          </button>
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
-              activeTab === 'users' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Usuarios y RBAC
           </button>
           <button
             onClick={() => setActiveTab('audit')}
@@ -401,6 +519,224 @@ export const AdminView: React.FC = () => {
 
       {/* Content Body */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Tab: Organizations */}
+        {activeTab === 'organizations' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap justify-between items-center gap-3">
+              <div>
+                <h3 className="font-bold text-slate-200 text-sm">Organizaciones de la Entidad ({organizations.length})</h3>
+                <p className="text-slate-400 text-[11px]">Gestión multi-organizacional, dominios asociados y estado operativo</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadData}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center gap-1.5 cursor-pointer"
+                  title="Actualizar lista"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                  <span>Refrescar</span>
+                </button>
+                <button
+                  onClick={() => setIsCreateOrgModalOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center gap-1.5 cursor-pointer shadow-sm shadow-indigo-600/30"
+                >
+                  <Building className="w-3.5 h-3.5" />
+                  <span>Nueva Organización</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400 font-semibold text-[11px]">
+                    <th className="p-3">Organización</th>
+                    <th className="p-3">Dominio Principal</th>
+                    <th className="p-3">Sector / Industria</th>
+                    <th className="p-3">Miembros Activos</th>
+                    <th className="p-3">Estado</th>
+                    <th className="p-3 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {organizations.map(org => {
+                    const isOrgActive = (org.status || '').toUpperCase() === 'ACTIVE' || org.status === 'Active';
+                    return (
+                      <tr key={org.id} className="hover:bg-slate-900/40 transition-colors">
+                        <td className="p-3 flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-950/80 border border-indigo-800/60 flex items-center justify-center font-bold text-indigo-300 text-xs shrink-0">
+                            {org.name.substring(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-slate-100 flex items-center gap-1.5">
+                              <span>{org.name}</span>
+                              {org.id === currentTenant?.id && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">Actual</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">{org.slug} • {org.id}</div>
+                          </div>
+                        </td>
+                        <td className="p-3 text-slate-300 font-mono text-[11px]">
+                          {org.primaryDomain || 'N/A'}
+                        </td>
+                        <td className="p-3 text-slate-300">
+                          {org.industry || 'Tecnología'}
+                        </td>
+                        <td className="p-3">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-950/60 border border-indigo-800 text-indigo-300">
+                            <Users className="w-3 h-3" />
+                            {org.memberCount ?? org.activeMemberCount ?? 0} miembros
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              isOrgActive
+                                ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-400'
+                                : 'bg-slate-900 border border-slate-700 text-rose-400'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${isOrgActive ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+                            {isOrgActive ? 'ACTIVA' : 'INACTIVA'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleViewOrgMembers(org)}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+                              title="Ver miembros"
+                            >
+                              Ver miembros
+                            </button>
+                            <button
+                              onClick={() => handleToggleOrgStatus(org)}
+                              className={`px-2 py-1 rounded text-[11px] font-medium cursor-pointer transition-colors ${
+                                isOrgActive
+                                  ? 'bg-rose-950/60 border border-rose-800 text-rose-300 hover:bg-rose-900/80'
+                                  : 'bg-emerald-950/60 border border-emerald-800 text-emerald-300 hover:bg-emerald-900/80'
+                              }`}
+                            >
+                              {isOrgActive ? 'Desactivar' : 'Reactivar'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Pending Activation */}
+        {activeTab === 'pending' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap justify-between items-center gap-3">
+              <div>
+                <h3 className="font-bold text-amber-400 text-sm flex items-center gap-2">
+                  <UserCheck className="w-4 h-4" />
+                  Solicitudes Pendientes de Activación ({users.filter(u => (u.accountStatus || '').toUpperCase() === 'PENDING_ACTIVATION').length})
+                </h3>
+                <p className="text-slate-400 text-[11px]">Colaboradores registrados que requieren aprobación administrativa para iniciar sesión</p>
+              </div>
+
+              <button
+                onClick={loadData}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>Refrescar</span>
+              </button>
+            </div>
+
+            {users.filter(u => (u.accountStatus || '').toUpperCase() === 'PENDING_ACTIVATION').length === 0 ? (
+              <div className="p-8 text-center rounded-xl border border-slate-800 bg-slate-950 text-slate-400">
+                <Check className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                <p className="font-semibold text-slate-200">No hay cuentas pendientes de activación</p>
+                <p className="text-[11px] text-slate-500 mt-1">Todas las solicitudes de registro han sido procesadas.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400 font-semibold text-[11px]">
+                      <th className="p-3">Colaborador</th>
+                      <th className="p-3">Cargo</th>
+                      <th className="p-3">Organizaciones Asignadas</th>
+                      <th className="p-3">Fecha Registro</th>
+                      <th className="p-3 text-right">Acción de Aprobación</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {users
+                      .filter(u => (u.accountStatus || '').toUpperCase() === 'PENDING_ACTIVATION')
+                      .map(u => (
+                        <tr key={u.id} className="hover:bg-slate-900/40 transition-colors">
+                          <td className="p-3 flex items-center gap-2.5">
+                            <img
+                              src={u.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
+                              alt=""
+                              className="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800"
+                            />
+                            <div>
+                              <div className="font-semibold text-slate-100">{u.firstName} {u.lastName}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                            </div>
+                          </td>
+                          <td className="p-3 text-slate-300">{u.jobTitle || 'Colaborador'}</td>
+                          <td className="p-3">
+                            <div className="flex flex-wrap items-center gap-1">
+                              {u.organizations && u.organizations.length > 0 ? (
+                                u.organizations.map((org: any) => (
+                                  <span key={org.id} className="px-2 py-0.5 rounded text-[10px] bg-indigo-950/80 border border-indigo-800 text-indigo-300">
+                                    {org.name}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-slate-500 italic text-[11px]">Sin organización</span>
+                              )}
+                              <button
+                                onClick={() => setAssigningUserOrg(u)}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                                title="Asignar organización"
+                              >
+                                + Org
+                              </button>
+                            </div>
+                          </td>
+                          <td className="p-3 text-slate-400 text-[11px]">
+                            {new Date(u.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => handleStatusChange(u.id, 'ACTIVE')}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs shadow-md shadow-emerald-600/30 cursor-pointer flex items-center gap-1.5"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Aprobar y Activar</span>
+                              </button>
+                              <button
+                                onClick={() => handleStatusChange(u.id, 'INACTIVE')}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/60 hover:border-rose-800 text-slate-400 hover:text-rose-300 border border-slate-700 text-xs cursor-pointer"
+                              >
+                                Rechazar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tab: Stats */}
         {activeTab === 'stats' && (
           <div className="space-y-6 max-w-5xl">
@@ -438,13 +774,12 @@ export const AdminView: React.FC = () => {
             <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/30 to-slate-950 border border-indigo-500/20 space-y-3">
               <div className="flex items-center gap-2 font-bold text-indigo-300 text-sm">
                 <Database className="w-4 h-4 text-indigo-400" />
-                <span>Arquitectura Multi-Tenant y Seguridad de Datos</span>
+                <span>Arquitectura Multi-Organizacional y Gobernanza Nexora</span>
               </div>
               <p className="text-slate-300 leading-relaxed text-xs">
-                Todas las entidades (usuarios, canales, mensajes, tareas, archivos y logs) están estrictamente
-                aisladas por el encabezado <code className="text-indigo-400 font-mono">X-Tenant-Id</code> del tenant{' '}
-                <strong className="text-white">{currentTenant?.name}</strong> (<code className="text-slate-400 font-mono">{currentTenant?.id}</code>).
-                Ninguna consulta ni conexión de SignalR puede cruzar datos entre distintas organizaciones.
+                Nexora implementa un modelo empresarial multi-organizacional con aislamiento de datos,
+                relaciones N:M de colaboradores mediante membresías y búsqueda federada en el directorio global.
+                La política corporativa estricta prohíbe el borrado físico (Zero Hard Delete).
               </p>
             </div>
           </div>
@@ -455,8 +790,8 @@ export const AdminView: React.FC = () => {
           <div className="space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-3">
               <div>
-                <h3 className="font-bold text-slate-200 text-sm">Gestión de Usuarios y RBAC ({users.length})</h3>
-                <p className="text-slate-400 text-[11px]">Control de acceso basado en roles, estados de cuenta y credenciales</p>
+                <h3 className="font-bold text-slate-200 text-sm">Gestión de Colaboradores y RBAC ({users.length})</h3>
+                <p className="text-slate-400 text-[11px]">Control de acceso basado en roles, organizaciones y ciclo de vida</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -473,7 +808,7 @@ export const AdminView: React.FC = () => {
                   className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold flex items-center gap-1.5 cursor-pointer shadow-sm shadow-indigo-600/30"
                 >
                   <UserPlus className="w-3.5 h-3.5" />
-                  <span>Nuevo Usuario</span>
+                  <span>Nuevo Colaborador</span>
                 </button>
               </div>
             </div>
@@ -482,8 +817,8 @@ export const AdminView: React.FC = () => {
               <table className="w-full text-left">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400 font-semibold text-[11px]">
-                    <th className="p-3">Usuario</th>
-                    <th className="p-3">Cargo</th>
+                    <th className="p-3">Colaborador</th>
+                    <th className="p-3">Organizaciones</th>
                     <th className="p-3">Presencia</th>
                     <th className="p-3">Estado Cuenta</th>
                     <th className="p-3">Rol RBAC</th>
@@ -491,94 +826,145 @@ export const AdminView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {users.map(u => (
-                    <tr key={u.id} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="p-3 flex items-center gap-2.5">
-                        <img
-                          src={u.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
-                          alt={u.firstName}
-                          className="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800"
-                        />
-                        <div>
-                          <div className="font-semibold text-slate-100 flex items-center gap-1.5">
-                            <span>{u.firstName} {u.lastName}</span>
-                            {currentUser?.id === u.id && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">Tú</span>
+                  {users.map(u => {
+                    const upperStatus = (u.accountStatus || (u.isActive ? 'ACTIVE' : 'INACTIVE')).toUpperCase();
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-900/40 transition-colors">
+                        <td className="p-3 flex items-center gap-2.5">
+                          <img
+                            src={u.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
+                            alt=""
+                            className="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800"
+                          />
+                          <div>
+                            <div className="font-semibold text-slate-100 flex items-center gap-1.5">
+                              <span>{u.firstName} {u.lastName}</span>
+                              {currentUser?.id === u.id && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">Tú</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap items-center gap-1">
+                            {u.organizations && u.organizations.length > 0 ? (
+                              u.organizations.map((org: any) => (
+                                <span
+                                  key={org.id}
+                                  className="px-2 py-0.5 rounded text-[10px] bg-indigo-950/80 border border-indigo-800 text-indigo-300 flex items-center gap-1"
+                                >
+                                  {org.name}
+                                  <button
+                                    onClick={() => handleRemoveUserOrg(u.id, org.id)}
+                                    className="text-indigo-400 hover:text-rose-400 cursor-pointer ml-0.5"
+                                    title="Desvincular de organización"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-slate-500 italic text-[11px]">Sin organización</span>
+                            )}
+                            <button
+                              onClick={() => setAssigningUserOrg(u)}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                              title="Asignar organización"
+                            >
+                              + Org
+                            </button>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900 text-slate-300 border border-slate-800">
+                            <span className={`w-1.5 h-1.5 rounded-full ${u.status === 'Online' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                            {u.status}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              upperStatus === 'ACTIVE'
+                                ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-400'
+                                : upperStatus === 'PENDING_ACTIVATION'
+                                ? 'bg-amber-950/60 border border-amber-800 text-amber-400'
+                                : 'bg-slate-900 border border-slate-700 text-rose-400'
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                upperStatus === 'ACTIVE'
+                                  ? 'bg-emerald-400'
+                                  : upperStatus === 'PENDING_ACTIVATION'
+                                  ? 'bg-amber-400'
+                                  : 'bg-rose-500'
+                              }`}
+                            />
+                            {upperStatus === 'ACTIVE' ? 'ACTIVO' : upperStatus === 'PENDING_ACTIVATION' ? 'PENDIENTE' : 'INACTIVO'}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          <select
+                            value={u.role}
+                            onChange={e => handleRoleChange(u.id, e.target.value)}
+                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 focus:outline-none focus:border-indigo-500 font-medium"
+                          >
+                            {availableRoles.map(r => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {upperStatus === 'PENDING_ACTIVATION' && (
+                              <button
+                                onClick={() => handleStatusChange(u.id, 'ACTIVE')}
+                                className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] shadow-sm cursor-pointer"
+                                title="Aprobar y activar usuario"
+                              >
+                                Aprobar
+                              </button>
+                            )}
+                            {upperStatus === 'ACTIVE' && currentUser?.id !== u.id && (
+                              <button
+                                onClick={() => handleStatusChange(u.id, 'INACTIVE')}
+                                className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 text-[11px] cursor-pointer"
+                                title="Desactivar usuario"
+                              >
+                                Desactivar
+                              </button>
+                            )}
+                            {upperStatus === 'INACTIVE' && (
+                              <button
+                                onClick={() => handleStatusChange(u.id, 'ACTIVE')}
+                                className="px-2 py-1 rounded bg-slate-800 hover:bg-emerald-950/60 text-slate-400 hover:text-emerald-400 text-[11px] cursor-pointer"
+                                title="Reactivar usuario"
+                              >
+                                Reactivar
+                              </button>
+                            )}
+                            <button
+                              onClick={() => openEditModal(u)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                              title="Editar usuario"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            {currentUser?.id !== u.id && (
+                              <button
+                                onClick={() => setDeletingUser(u)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                title="Dar de baja usuario"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             )}
                           </div>
-                          <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
-                        </div>
-                      </td>
-                      <td className="p-3 text-slate-300">{u.jobTitle || 'Miembro'}</td>
-                      <td className="p-3">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900 text-slate-300 border border-slate-800">
-                          <span className={`w-1.5 h-1.5 rounded-full ${u.status === 'Online' ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                          {u.status}
-                        </span>
-                      </td>
-                      <td className="p-3">
-                        <select
-                          value={u.accountStatus || 'Active'}
-                          onChange={e => handleStatusChange(u.id, e.target.value as any)}
-                          className={`bg-slate-900 border rounded px-2 py-1 text-[11px] font-medium focus:outline-none ${
-                            u.accountStatus === 'Suspended'
-                              ? 'text-rose-400 border-rose-500/30'
-                              : u.accountStatus === 'Inactive'
-                              ? 'text-amber-400 border-amber-500/30'
-                              : 'text-emerald-400 border-emerald-500/30'
-                          }`}
-                        >
-                          <option value="Active">Activo</option>
-                          <option value="Suspended">Suspendido</option>
-                          <option value="Inactive">Inactivo</option>
-                        </select>
-                      </td>
-                      <td className="p-3">
-                        <select
-                          value={u.role}
-                          onChange={e => handleRoleChange(u.id, e.target.value)}
-                          className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 focus:outline-none focus:border-indigo-500 font-medium"
-                        >
-                          {availableRoles.map(r => (
-                            <option key={r} value={r}>{r}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="p-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {currentUser?.id !== u.id && (
-                            <button
-                              onClick={() => handleStatusChange(u.id, u.accountStatus === 'Active' ? 'Inactive' : 'Active')}
-                              className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                                u.accountStatus === 'Active'
-                                  ? 'text-emerald-400 hover:text-amber-400 hover:bg-amber-500/10'
-                                  : 'text-amber-400 hover:text-emerald-400 hover:bg-emerald-500/10'
-                              }`}
-                              title={u.accountStatus === 'Active' ? 'Desactivar usuario' : 'Activar usuario'}
-                            >
-                              {u.accountStatus === 'Active' ? <UserCheck className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
-                            </button>
-                          )}
-                          <button
-                            onClick={() => openEditModal(u)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-slate-800 transition-colors cursor-pointer"
-                            title="Editar usuario"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          {currentUser?.id !== u.id && (
-                            <button
-                              onClick={() => setDeletingUser(u)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                              title="Eliminar usuario"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -891,6 +1277,35 @@ export const AdminView: React.FC = () => {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Estado de Cuenta Inicial</label>
+                  <select
+                    value={newUserAccountStatus}
+                    onChange={e => setNewUserAccountStatus(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
+                  >
+                    <option value="ACTIVE">Activo (Acceso Inmediato)</option>
+                    <option value="PENDING_ACTIVATION">Pendiente de Activación</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Organización Asignada</label>
+                  <select
+                    value={newUserOrgId}
+                    onChange={e => setNewUserOrgId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
+                  >
+                    <option value="">Seleccionar Organización...</option>
+                    {organizations
+                      .filter(o => (o.status || '').toUpperCase() === 'ACTIVE' || o.status === 'Active')
+                      .map(o => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-medium mb-1">Contraseña Inicial (Opcional)</label>
                 <input
@@ -918,6 +1333,235 @@ export const AdminView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE ORGANIZATION MODAL */}
+      {isCreateOrgModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Building className="w-4 h-4 text-indigo-400" />
+                <h3 className="font-bold text-slate-100 text-sm">Nueva Organización Empresarial</h3>
+              </div>
+              <button
+                onClick={() => setIsCreateOrgModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateOrganization} className="space-y-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Nombre de la Organización</label>
+                <input
+                  type="text"
+                  value={newOrgName}
+                  onChange={e => setNewOrgName(e.target.value)}
+                  placeholder="Ej: Clínica San Rafael, Red Hospitalaria Norte..."
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Identificador / Slug</label>
+                  <input
+                    type="text"
+                    value={newOrgSlug}
+                    onChange={e => setNewOrgSlug(e.target.value)}
+                    placeholder="san-rafael"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Dominio Corporativo</label>
+                  <input
+                    type="text"
+                    value={newOrgDomain}
+                    onChange={e => setNewOrgDomain(e.target.value)}
+                    placeholder="clinica-sanrafael.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Sector / Industria</label>
+                <input
+                  type="text"
+                  value={newOrgIndustry}
+                  onChange={e => setNewOrgIndustry(e.target.value)}
+                  placeholder="Salud, Farmacéutica, Tecnología Médica..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateOrgModalOpen(false)}
+                  className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-md shadow-indigo-600/30 cursor-pointer"
+                >
+                  Crear Organización
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ASSIGN USER TO ORGANIZATION MODAL */}
+      {assigningUserOrg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Building className="w-4 h-4 text-indigo-400" />
+                <h3 className="font-bold text-slate-100 text-sm">
+                  Asignar a Organización: {assigningUserOrg.firstName} {assigningUserOrg.lastName}
+                </h3>
+              </div>
+              <button
+                onClick={() => setAssigningUserOrg(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Seleccionar Organización</label>
+                <select
+                  value={targetOrgIdToAssign}
+                  onChange={e => setTargetOrgIdToAssign(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
+                >
+                  <option value="">Seleccione una organización activa...</option>
+                  {organizations
+                    .filter(o => (o.status || '').toUpperCase() === 'ACTIVE' || o.status === 'Active')
+                    .map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.name} ({o.slug})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Rol en la Organización</label>
+                <select
+                  value={targetOrgRoleToAssign}
+                  onChange={e => setTargetOrgRoleToAssign(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
+                >
+                  <option value="Member">Member (Colaborador)</option>
+                  <option value="Admin">Admin (Administrador)</option>
+                  <option value="Guest">Guest (Invitado)</option>
+                </select>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setAssigningUserOrg(null)}
+                  className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={!targetOrgIdToAssign}
+                  onClick={handleAssignUserOrg}
+                  className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold shadow-md shadow-indigo-600/30 cursor-pointer"
+                >
+                  Asignar Colaborador
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW ORGANIZATION MEMBERS MODAL */}
+      {viewingOrgMembers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-xs max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-indigo-400" />
+                <h3 className="font-bold text-slate-100 text-sm">
+                  Miembros de: {viewingOrgMembers.name} ({orgMembersList.length})
+                </h3>
+              </div>
+              <button
+                onClick={() => setViewingOrgMembers(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2">
+              {orgMembersList.length === 0 ? (
+                <div className="py-8 text-center text-slate-500">
+                  No hay miembros registrados en esta organización.
+                </div>
+              ) : (
+                orgMembersList.map(m => (
+                  <div
+                    key={m.id}
+                    className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={m.user?.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80'}
+                        alt=""
+                        className="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800"
+                      />
+                      <div>
+                        <div className="font-semibold text-slate-200">{m.user?.displayName || m.user?.email || m.userId}</div>
+                        <div className="text-[10px] text-slate-400">{m.user?.jobTitle || 'Miembro'} • {m.user?.email}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950/80 border border-indigo-800 text-indigo-300 font-medium">
+                        {m.role}
+                      </span>
+                      <span
+                        className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
+                          (m.status || '').toUpperCase() === 'ACTIVE' || m.status === 'Active'
+                            ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-400'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {m.status}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-slate-800 flex justify-end">
+              <button
+                onClick={() => setViewingOrgMembers(null)}
+                className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -956,7 +1600,7 @@ export const AdminView: React.FC = () => {
                   <input
                     type="text"
                     value={editLastName}
-                    onChange={e => setEditLastName(e.target.value)}
+                    onChange={e => setNewLastName(e.target.value)}
                     required
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500"
                   />
@@ -1004,9 +1648,9 @@ export const AdminView: React.FC = () => {
                   onChange={e => setEditStatus(e.target.value as any)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
                 >
-                  <option value="Active">Activo</option>
+                  <option value="Active">Activo (ACTIVE)</option>
                   <option value="Suspended">Suspendido</option>
-                  <option value="Inactive">Inactivo</option>
+                  <option value="Inactive">Inactivo (INACTIVE)</option>
                 </select>
               </div>
 
@@ -1036,11 +1680,11 @@ export const AdminView: React.FC = () => {
           <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-xs">
             <div className="flex items-center gap-2.5 text-rose-400">
               <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h3 className="font-bold text-slate-100 text-sm">Eliminar Usuario</h3>
+              <h3 className="font-bold text-slate-100 text-sm">Dar de Baja Colaborador</h3>
             </div>
             <p className="text-slate-300 leading-relaxed">
-              ¿Está seguro de que desea eliminar a <strong className="text-white">{deletingUser.firstName} {deletingUser.lastName}</strong> (<code className="text-slate-400">{deletingUser.email}</code>)?
-              Esta acción revocará de inmediato sus accesos y se registrará en la auditoría.
+              ¿Está seguro de que desea dar de baja a <strong className="text-white">{deletingUser.firstName} {deletingUser.lastName}</strong> (<code className="text-slate-400">{deletingUser.email}</code>)?
+              Se aplicará una baja lógica reversible (Zero Hard Delete) y se registrará en la auditoría.
             </p>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
@@ -1053,7 +1697,7 @@ export const AdminView: React.FC = () => {
                 onClick={handleDeleteUser}
                 className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold shadow-md shadow-rose-600/30 cursor-pointer"
               >
-                Eliminar Permanentemente
+                Dar de Baja
               </button>
             </div>
           </div>

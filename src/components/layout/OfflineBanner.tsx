@@ -9,7 +9,7 @@ export const OfflineBanner: React.FC = () => {
 
   return (
     <div
-      id="collabpulse-offline-banner"
+      id="nexora-offline-banner"
       role="alert"
       className="bg-amber-600/90 text-amber-50 px-4 py-1.5 text-xs flex items-center justify-between z-40 border-b border-amber-500/50 backdrop-blur-xs font-medium"
     >

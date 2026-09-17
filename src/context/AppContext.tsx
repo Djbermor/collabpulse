@@ -136,7 +136,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // User Settings
   const [userSettings, setUserSettings] = useState<UserSettings>(() => {
-    const saved = localStorage.getItem('collabpulse_settings');
+    const saved = localStorage.getItem('nexora_settings') || localStorage.getItem('collabpulse_settings');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -162,6 +162,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateUserSettings = (newSettings: Partial<UserSettings>) => {
     setUserSettings(prev => {
       const updated = { ...prev, ...newSettings };
+      localStorage.setItem('nexora_settings', JSON.stringify(updated));
       localStorage.setItem('collabpulse_settings', JSON.stringify(updated));
       return updated;
     });

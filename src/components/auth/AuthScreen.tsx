@@ -143,7 +143,7 @@ export const AuthScreen: React.FC = () => {
       if (!result.success) {
         setErrorMessage(result.message || 'Error al registrar el usuario');
       } else {
-        addToast('Cuenta creada con éxito. ¡Bienvenido a CollabPulse!', 'success');
+        addToast('Cuenta creada con éxito. ¡Bienvenido a Nexora!', 'success');
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Error al conectar con el servidor');
@@ -201,7 +201,7 @@ export const AuthScreen: React.FC = () => {
             <Building2 className="w-6 h-6" />
           </div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-            CollabPulse <span className="text-indigo-400 font-light">Enterprise</span>
+            Nexora <span className="text-indigo-400 font-light">Enterprise</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1">
             Plataforma Segura de Colaboración Corporativa

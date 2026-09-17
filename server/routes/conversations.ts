@@ -7,13 +7,12 @@ import { Conversation } from '../../src/types';
 
 export const conversationsRouter = Router();
 
-// List direct conversations for authenticated user in tenant (Section 25-27)
+// List direct conversations for authenticated user across organizations
 conversationsRouter.get('/', authenticate, (req: AuthenticatedRequest, res: Response) => {
-  const tenantId = req.user!.tenantId;
   const userId = req.user!.id;
 
   const userConversations = db.conversations
-    .filter(c => c.tenantId === tenantId && c.memberIds.includes(userId))
+    .filter(c => c.memberIds && c.memberIds.includes(userId))
     .map(c => {
       let displayName = c.name;
       let displayAvatar = c.avatarUrl;
@@ -21,9 +20,9 @@ conversationsRouter.get('/', authenticate, (req: AuthenticatedRequest, res: Resp
 
       if (!c.isGroup) {
         const otherId = c.memberIds.find(id => id !== userId);
-        otherUser = db.users.find(u => u.id === otherId && u.tenantId === tenantId);
+        otherUser = db.users.find(u => u.id === otherId);
         if (otherUser) {
-          displayName = otherUser.displayName || `${otherUser.firstName} ${otherUser.lastName}`;
+          displayName = otherUser.displayName || `${otherUser.firstName} ${otherUser.lastName}`.trim() || otherUser.userName;
           displayAvatar = otherUser.avatarUrl;
         }
       }
@@ -56,30 +55,32 @@ conversationsRouter.get('/', authenticate, (req: AuthenticatedRequest, res: Resp
   res.json({ success: true, data: userConversations });
 });
 
-// Create or get 1:1 or group conversation (Section 25-27)
+// Create or get 1:1 or group conversation (Supports cross-organization collaborators)
 conversationsRouter.post('/', authenticate, requirePermission('dms.create'), async (req: AuthenticatedRequest, res: Response) => {
   const tenantId = req.user!.tenantId;
   const userId = req.user!.id;
   const workspaceId = req.workspace?.id || (req.user as any)?.workspaceId || db.workspaces[0]?.id || '';
-  const { targetUserId, memberIds, isGroup, name } = req.body;
+  const { targetUserId, memberIds, isGroup, type, name } = req.body;
+  const isDirect = !isGroup && type !== 'group';
+  const resolvedTargetUserId = targetUserId || (Array.isArray(memberIds) ? memberIds.find((id: string) => id !== userId) : undefined);
 
-  if (!isGroup && targetUserId) {
-    if (targetUserId === userId) {
+  if (isDirect && resolvedTargetUserId) {
+    if (resolvedTargetUserId === userId) {
       return res.status(400).json({ success: false, message: 'No puedes iniciar un chat directo contigo mismo', code: 'INVALID_TARGET' });
     }
 
-    const targetUser = db.users.find(u => u.id === targetUserId && u.tenantId === tenantId);
+    // Cross-organization user lookup: target must be an active collaborator anywhere in Nexora
+    const targetUser = db.users.find(u => u.id === resolvedTargetUserId && ((u.accountStatus || '').toUpperCase() === 'ACTIVE' || u.accountStatus === 'Active'));
     if (!targetUser) {
-      return res.status(404).json({ success: false, message: 'Usuario destinatario no encontrado en la organización', code: 'USER_NOT_FOUND' });
+      return res.status(404).json({ success: false, message: 'Usuario destinatario no encontrado o inactivo', code: 'USER_NOT_FOUND' });
     }
 
-    // Check if 1:1 already exists
+    // Check if 1:1 already exists (irrespective of tenantId)
     const existing = db.conversations.find(c =>
-      c.tenantId === tenantId &&
       !c.isGroup &&
       c.memberIds.length === 2 &&
       c.memberIds.includes(userId) &&
-      c.memberIds.includes(targetUserId)
+      c.memberIds.includes(resolvedTargetUserId)
     );
 
     if (existing) {
@@ -108,7 +109,7 @@ conversationsRouter.post('/', authenticate, requirePermission('dms.create'), asy
       tenantId,
       workspaceId,
       isGroup: false,
-      memberIds: [userId, targetUserId],
+      memberIds: [userId, resolvedTargetUserId],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       unreadCount: 0
@@ -117,7 +118,7 @@ conversationsRouter.post('/', authenticate, requirePermission('dms.create'), asy
     await db.persistConversation(newConv);
 
     db.enqueueOutbox('ConversationCreated', { conversation: newConv });
-    realtimeHub.sendToUser(targetUserId, 'ConversationCreated', newConv);
+    realtimeHub.sendToUser(resolvedTargetUserId, 'ConversationCreated', newConv);
     realtimeHub.sendToUser(userId, 'ConversationCreated', newConv);
 
     return res.status(201).json({
@@ -198,7 +199,7 @@ conversationsRouter.post('/:id/members', authenticate, async (req: Authenticated
   const workspaceId = req.workspace?.id || db.workspaces[0]?.id || '';
   const { userId: newUserId, userIds } = req.body;
 
-  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId && c.memberIds.includes(callerId));
+  const conv = db.conversations.find(c => c.id === id && c.memberIds.includes(callerId));
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
@@ -237,7 +238,7 @@ conversationsRouter.delete('/:id/members/:userId', authenticate, async (req: Aut
   const tenantId = req.user!.tenantId;
   const callerId = req.user!.id;
 
-  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId && c.memberIds.includes(callerId));
+  const conv = db.conversations.find(c => c.id === id && c.memberIds.includes(callerId));
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
@@ -267,7 +268,7 @@ conversationsRouter.post('/:id/leave', authenticate, async (req: AuthenticatedRe
   const tenantId = req.user!.tenantId;
   const callerId = req.user!.id;
 
-  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId && c.memberIds.includes(callerId));
+  const conv = db.conversations.find(c => c.id === id && c.memberIds.includes(callerId));
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
@@ -294,7 +295,7 @@ conversationsRouter.patch('/:id', authenticate, async (req: AuthenticatedRequest
   const callerId = req.user!.id;
   const { name } = req.body;
 
-  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId && c.memberIds.includes(callerId));
+  const conv = db.conversations.find(c => c.id === id && c.memberIds.includes(callerId));
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
@@ -352,7 +353,7 @@ conversationsRouter.get('/:id', authenticate, (req: AuthenticatedRequest, res: R
   const tenantId = req.user!.tenantId;
   const userId = req.user!.id;
 
-  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId);
+  const conv = db.conversations.find(c => c.id === id);
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
@@ -381,7 +382,7 @@ conversationsRouter.get('/:id/messages', authenticate, (req: AuthenticatedReques
   const userId = req.user!.id;
   const { cursor, limit = 50, direction = 'before' } = req.query;
 
-  const conv = db.conversations.find(c => c.id === id && c.tenantId === tenantId);
+  const conv = db.conversations.find(c => c.id === id);
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }
@@ -390,7 +391,7 @@ conversationsRouter.get('/:id/messages', authenticate, (req: AuthenticatedReques
   }
 
   let filtered = db.messages
-    .filter(m => m.conversationId === id && m.tenantId === tenantId && !m.parentMessageId)
+    .filter(m => m.conversationId === id && !m.parentMessageId)
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   const pageSize = Math.min(100, Math.max(1, Number(limit) || 50));
@@ -434,7 +435,7 @@ conversationsRouter.post('/:id/messages', authenticate, requirePermission('messa
   const user = req.user!;
   const { content, attachments = [], clientMessageId, parentMessageId } = req.body;
 
-  const conv = db.conversations.find(c => c.id === conversationId && c.tenantId === tenantId);
+  const conv = db.conversations.find(c => c.id === conversationId);
   if (!conv) {
     return res.status(404).json({ success: false, message: 'Conversación no encontrada' });
   }

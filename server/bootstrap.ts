@@ -290,8 +290,26 @@ export async function bootstrapDatabase() {
         CREATE INDEX IF NOT EXISTS idx_message_deliveries_message_id ON message_deliveries(message_id);
         CREATE INDEX IF NOT EXISTS idx_message_deliveries_user_id ON message_deliveries(user_id);
         CREATE INDEX IF NOT EXISTS idx_message_attachments_msg_id ON message_attachments(message_id);
+
+        -- FASE 3: ORGANIZATIONS & ORGANIZATION_MEMBERS EXTENSIONS
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS created_by TEXT;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP WITH TIME ZONE;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deactivated_by TEXT;
+
+        ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+        ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+        ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS created_by TEXT;
+        ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMP WITH TIME ZONE;
+        ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS deactivated_by TEXT;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_active_unique ON organization_members(organization_id, user_id) 
+        WHERE status = 'Active' OR status = 'ACTIVE';
+
+        CREATE INDEX IF NOT EXISTS idx_org_members_user_id ON organization_members(user_id);
+        CREATE INDEX IF NOT EXISTS idx_org_members_org_id ON organization_members(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
       `);
-      console.log('[Bootstrap] Organizations, notifications, call engine (1:1 & Group) and Phase 6 messaging tables verified in PostgreSQL.');
+      console.log('[Bootstrap] Organizations, notifications, call engine (1:1 & Group), Phase 6 messaging and Phase 3 organizations tables verified in PostgreSQL.');
     } catch (err: any) {
       console.error('[Bootstrap] Error creating extended DDL tables:', err.message);
     }
@@ -480,7 +498,7 @@ export async function bootstrapDatabase() {
         await pool.query(`
           INSERT INTO channels (id, workspace_id, tenant_id, name, description, topic, type, is_archived, is_general, created_by, created_at, updated_at)
           VALUES 
-            ($1, $2, $3, 'general', 'Canal general de la organización para anuncios y discusiones.', 'Bienvenida a CollabPulse', 'Public', false, true, $4, NOW(), NOW()),
+            ($1, $2, $3, 'general', 'Canal general de la organización para anuncios y discusiones.', 'Bienvenida a Nexora', 'Public', false, true, $4, NOW(), NOW()),
             ($5, $2, $3, 'random', 'Canal para charlas casuales, descanso y novedades del equipo.', 'Cafetería virtual', 'Public', false, false, $4, NOW(), NOW())
           ON CONFLICT (id) DO NOTHING;
         `, [generalChId, ws.id, ws.tenant_id, ws.owner_id, randomChId]);

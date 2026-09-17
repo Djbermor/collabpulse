@@ -211,7 +211,16 @@ authRouter.post('/login', async (req, res) => {
     });
   }
 
-  if (user.accountStatus === 'Deleted' || user.isActive === false) {
+  const upperAccountStatus = (user.accountStatus || '').toUpperCase();
+  if (upperAccountStatus === 'PENDING_ACTIVATION') {
+    return res.status(403).json({
+      success: false,
+      message: 'Su cuenta está pendiente de activación por un administrador.',
+      code: 'ACCOUNT_PENDING_ACTIVATION'
+    });
+  }
+
+  if (upperAccountStatus === 'INACTIVE' || user.accountStatus === 'Inactive' || user.accountStatus === 'Deleted' || user.isActive === false) {
     return res.status(403).json({
       success: false,
       message: 'La cuenta no está activa.',
@@ -265,7 +274,7 @@ authRouter.post('/login', async (req, res) => {
   const refreshTokenHash = hashToken(rawRefreshToken);
 
   // Device & User Agent Parsing
-  const userAgentStr = req.headers['user-agent'] || 'CollabPulse Desktop / 1.0';
+  const userAgentStr = req.headers['user-agent'] || 'Nexora Desktop / 1.0';
   const deviceInfo = parseUserAgent(userAgentStr);
 
   // Persist Session
@@ -542,7 +551,7 @@ authRouter.post('/register', async (req, res) => {
     role: newUser.role
   });
 
-  const userAgentStr = req.headers['user-agent'] || 'CollabPulse Browser / 1.0';
+  const userAgentStr = req.headers['user-agent'] || 'Nexora Browser / 1.0';
   const deviceInfo = parseUserAgent(userAgentStr);
 
   const session: UserSession = {
@@ -1283,7 +1292,7 @@ authRouter.post('/switch-user', (req, res) => {
     browser: 'Browser',
     os: 'OS',
     ipAddress: req.ip || '127.0.0.1',
-    userAgent: req.headers['user-agent'] || 'CollabPulse Web',
+    userAgent: req.headers['user-agent'] || 'Nexora Web',
     createdAt: new Date().toISOString(),
     lastUsedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 7 * 86400000).toISOString()
