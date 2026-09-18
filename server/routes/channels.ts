@@ -53,6 +53,43 @@ channelsRouter.post('/', authenticate, requirePermission('channels.create'), asy
   const workspaceId = req.workspace!.id;
   const userId = req.user!.id;
 
+  // REGLA CRÍTICA: Bloquear operaciones en organización inactiva
+  const targetOrgId = req.body.organizationId || (req.headers['x-tenant-id'] as string) || tenantId;
+  let org = db.organizations.find(o => o.id === targetOrgId);
+  try {
+    const { pool } = await import('../../src/db/index.ts');
+    const orgRes = await pool.query('SELECT * FROM organizations WHERE id = $1', [targetOrgId]);
+    if (orgRes.rows.length > 0) {
+      const row = orgRes.rows[0];
+      if (org) {
+        org.status = row.status;
+        org.isActive = (row.status === 'Active' || row.status === 'ACTIVE');
+      } else {
+        org = {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          type: row.type || 'Enterprise',
+          industry: row.industry || 'Technology',
+          status: row.status,
+          isActive: (row.status === 'Active' || row.status === 'ACTIVE'),
+          settings: row.settings || '{}',
+          createdAt: new Date(row.created_at).toISOString(),
+          updatedAt: new Date(row.updated_at).toISOString()
+        } as any;
+        db.organizations.push(org);
+      }
+    }
+  } catch {}
+
+  if (org && (org.status === 'INACTIVE' || org.status === 'Inactive')) {
+    return res.status(400).json({
+      success: false,
+      message: 'No se pueden crear canales en una organización inactiva',
+      code: 'ORGANIZATION_INACTIVE'
+    });
+  }
+
   if (!name || name.trim().length === 0) {
     return res.status(400).json({ success: false, message: 'El nombre del canal es requerido', code: 'INVALID_NAME' });
   }

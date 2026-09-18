@@ -28,6 +28,7 @@ import { CallsView } from './components/meetings/CallsView';
 import { OfflineBanner } from './components/layout/OfflineBanner';
 import { ToastContainer } from './components/layout/ToastContainer';
 import { AuthScreen } from './components/auth/AuthScreen';
+import { HomeView } from './components/home/HomeView';
 import { Loader2, ShieldAlert } from 'lucide-react';
 
 const DisabledFeatureFallback: React.FC<{ name: string }> = ({ name }) => {
@@ -120,6 +121,8 @@ const MainLayout: React.FC = () => {
 
   const renderActiveView = () => {
     switch (activeView) {
+      case 'home':
+        return <HomeView />;
       case 'channel':
       case 'conversation':
         return <ChatArea />;

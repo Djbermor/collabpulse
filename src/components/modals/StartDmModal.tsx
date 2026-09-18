@@ -26,17 +26,28 @@ export const StartDmModal: React.FC = () => {
     let isMounted = true;
     setLoading(true);
 
-    api.getWorkspaceUsers(searchQuery.trim())
-      .then(res => {
-        if (isMounted && res.success && res.data) {
-          const filtered = res.data.filter((u: any) => u.id !== currentUser?.id);
-          setUsers(filtered);
-        }
-      })
-      .catch(err => console.error('Error fetching workspace users for DM:', err))
-      .finally(() => {
-        if (isMounted) setLoading(false);
-      });
+    const q = searchQuery.trim();
+    Promise.allSettled([
+      api.searchDirectory(q),
+      api.getWorkspaceUsers(q)
+    ]).then(([dirRes, wsRes]) => {
+      if (!isMounted) return;
+      const combined = new Map<string, any>();
+      if (dirRes.status === 'fulfilled' && dirRes.value.success && Array.isArray(dirRes.value.data)) {
+        dirRes.value.data.forEach((u: any) => combined.set(u.id, u));
+      }
+      if (wsRes.status === 'fulfilled' && wsRes.value.success && Array.isArray(wsRes.value.data)) {
+        wsRes.value.data.forEach((u: any) => {
+          if (!combined.has(u.id)) combined.set(u.id, u);
+        });
+      }
+      const filtered = Array.from(combined.values()).filter((u: any) => u.id !== currentUser?.id);
+      setUsers(filtered);
+    }).catch(err => {
+      console.error('Error fetching directory users for DM:', err);
+    }).finally(() => {
+      if (isMounted) setLoading(false);
+    });
 
     return () => {
       isMounted = false;
@@ -113,26 +124,13 @@ export const StartDmModal: React.FC = () => {
                 <MessageSquare className="w-5 h-5" />
               </div>
               <p className="text-slate-300 font-medium mb-1">
-                {searchQuery.trim() ? 'No se encontraron resultados' : 'No hay otros colaboradores todavía'}
+                {searchQuery.trim() ? 'No se encontraron colaboradores' : 'Directorio de colaboradores'}
               </p>
-              <p className="text-[11px] text-slate-500 mb-4 max-w-xs mx-auto">
+              <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
                 {searchQuery.trim()
-                  ? 'Intenta con otro término o verifica la ortografía.'
-                  : 'Invita a tus compañeros de equipo a este espacio para comenzar a colaborar.'}
+                  ? 'Intenta buscar con otro nombre, cargo o correo.'
+                  : 'Busca a cualquier colaborador por nombre o cargo para iniciar una conversación 1:1.'}
               </p>
-              {!searchQuery.trim() && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsStartDmOpen(false);
-                    setIsInviteOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-sm cursor-pointer"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Invitar colaboradores</span>
-                </button>
-              )}
             </div>
           ) : (
             users.map(u => {

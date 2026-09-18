@@ -3,7 +3,7 @@ import crypto from 'crypto';
 // Configuration
 export const JWT_SECRET = process.env.JWT_SECRET || 'collabpulse_enterprise_secure_jwt_secret_2026_key_!@#$';
 export const ACCESS_TOKEN_LIFETIME_SECONDS = 15 * 60; // 15 minutes
-export const REFRESH_TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60; // 7 days
+export const REFRESH_TOKEN_LIFETIME_SECONDS = 15 * 24 * 60 * 60; // 15 days persistent session
 export const MAX_LOGIN_ATTEMPTS = 5;
 export const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 

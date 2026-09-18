@@ -357,6 +357,13 @@ class ApiClient {
     return this.request(`/organizations/lookup/by-domain?domain=${encodeURIComponent(domain)}`);
   }
 
+  public verifyEmail(payload: { email: string; code: string }) {
+    return this.request<any>('/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
   // --- Workspaces & Membership ---
   public getTenants() {
     return this.getOrganizations();

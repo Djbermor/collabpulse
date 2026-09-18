@@ -23,7 +23,7 @@ import { api } from '../../services/api';
 export const AuthScreen: React.FC = () => {
   const { login, register, userSettings, toggleTheme, addToast } = useApp();
 
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'verify' | 'pending'>('login');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -35,6 +35,10 @@ export const AuthScreen: React.FC = () => {
   const [jobTitle, setJobTitle] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Verification code state
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
 
   // Forgot password state
   const [forgotEmail, setForgotEmail] = useState('');
@@ -131,7 +135,7 @@ export const AuthScreen: React.FC = () => {
 
     setLoading(true);
     try {
-      const result = await register({
+      const result: any = await register({
         email: cleanEmail,
         password,
         firstName: firstName.trim(),
@@ -140,6 +144,23 @@ export const AuthScreen: React.FC = () => {
         role: 'Member'
       });
 
+      if (result.requiresVerification) {
+        setVerifyEmail(cleanEmail);
+        if (result.verificationCode) {
+          setVerificationCode(result.verificationCode);
+        }
+        setMode('verify');
+        setSuccessMessage(result.message || 'Se ha enviado un código numérico de verificación de 6 dígitos a su correo corporativo.');
+        return;
+      }
+
+      if (result.pendingApproval) {
+        setVerifyEmail(cleanEmail);
+        setMode('pending');
+        setErrorMessage(null);
+        return;
+      }
+
       if (!result.success) {
         setErrorMessage(result.message || 'Error al registrar el usuario');
       } else {
@@ -147,6 +168,36 @@ export const AuthScreen: React.FC = () => {
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Error al conectar con el servidor');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loading) return;
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const cleanCode = verificationCode.trim();
+    if (!cleanCode || cleanCode.length !== 6) {
+      setErrorMessage('Por favor ingrese el código de 6 dígitos recibido.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await api.verifyEmail({ email: verifyEmail, code: cleanCode });
+      if (res.success) {
+        addToast('¡Cuenta corporativa activada con éxito! Inicie sesión.', 'success');
+        setMode('login');
+        setIdentifier(verifyEmail);
+        setSuccessMessage('Su cuenta ha sido verificada exitosamente. Ingrese su contraseña para acceder.');
+      } else {
+        setErrorMessage(res.message || 'Código de verificación inválido o expirado.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error al conectar con el servidor de verificación');
     } finally {
       setLoading(false);
     }
@@ -543,6 +594,101 @@ export const AuthScreen: React.FC = () => {
               </button>
             </div>
           </form>
+        )}
+
+        {/* MODE: VERIFY 6-DIGIT CODE */}
+        {mode === 'verify' && (
+          <form onSubmit={handleVerifyCode} className="space-y-4">
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 mx-auto">
+                <Mail className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Verificación de Correo Corporativo</h3>
+              <p className="text-xs text-slate-400">
+                Hemos enviado un código numérico de 6 dígitos a <span className="font-semibold text-slate-200">{verifyEmail}</span>. Ingréselo para activar su cuenta.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1.5 text-center">
+                Código de Verificación (6 dígitos)
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={verificationCode}
+                onChange={e => setVerificationCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="123456"
+                autoFocus
+                required
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-center text-lg font-mono tracking-widest text-indigo-300 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || verificationCode.trim().length !== 6}
+              className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all shadow-md shadow-indigo-600/20 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Verificando código...</span>
+                </>
+              ) : (
+                <>
+                  <span>Verificar y Activar Cuenta</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('login');
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                }}
+                className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
+              >
+                Volver al Inicio de Sesión
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* MODE: PENDING APPROVAL (NON-CORPORATE EMAIL) */}
+        {mode === 'pending' && (
+          <div className="space-y-4 text-center py-2">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <h3 className="text-sm font-bold text-white">Registro Recibido — Pendiente de Activación</h3>
+            <p className="text-xs text-slate-300 leading-relaxed max-w-sm mx-auto">
+              Su cuenta con correo <span className="font-semibold text-slate-100">{verifyEmail}</span> ha sido registrada en el sistema.
+            </p>
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 text-left space-y-1">
+              <span className="font-semibold">Política de seguridad empresarial:</span>
+              <p className="text-[11px] text-amber-200/80">
+                Al registrarse con un dominio no corporativo, su cuenta se encuentra en estado <strong>PENDING_ACTIVATION</strong> y requiere la aprobación manual de un administrador de la organización antes de poder acceder.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('login');
+                setErrorMessage(null);
+                setSuccessMessage(null);
+              }}
+              className="w-full mt-2 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-all cursor-pointer"
+            >
+              Volver al Inicio de Sesión
+            </button>
+          </div>
         )}
       </div>
 

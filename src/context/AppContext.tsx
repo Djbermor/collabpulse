@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import { signalR } from '../services/signalr';
 import { sound } from '../services/sound';
 
-export type ActiveView = 'channel' | 'conversation' | 'tasks' | 'calendar' | 'meeting' | 'files' | 'admin' | 'settings' | 'activity' | 'saved';
+export type ActiveView = 'home' | 'channel' | 'conversation' | 'tasks' | 'calendar' | 'meeting' | 'files' | 'admin' | 'settings' | 'activity' | 'saved';
 
 interface AppContextType {
   currentUser: User | null;
@@ -93,7 +93,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
-  const [activeView, setActiveViewState] = useState<ActiveView>('channel');
+  const [activeView, setActiveViewState] = useState<ActiveView>('home');
+  const [orgNavContext, setOrgNavContext] = useState<Record<string, { activeView: ActiveView; channelId?: string; conversationId?: string }>>({});
   const [features, setFeatures] = useState<FeaturePermissions>(DEFAULT_MVP_FEATURES);
   const [activeThreadParent, setActiveThreadParent] = useState<Message | null>(null);
   const [activeMeeting, setActiveMeeting] = useState<Meeting | null>(null);
@@ -296,6 +297,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (res.data.user.tenantId) api.setTenantId(res.data.user.tenantId);
         if (res.data.workspace?.id) api.setWorkspaceId(res.data.workspace.id);
         setCurrentUser(res.data.user);
+        setActiveViewState('home');
         await loadInitialData();
         return { success: true, mustChangePassword: res.data.mustChangePassword };
       }
@@ -314,12 +316,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const register = async (payload: any) => {
     try {
       const res = await api.register(payload);
+      if ((res as any).requiresVerification) {
+        return {
+          success: false,
+          requiresVerification: true,
+          email: (res as any).email,
+          message: res.message,
+          verificationCode: (res as any).verificationCode
+        } as any;
+      }
+      if ((res as any).pendingApproval) {
+        return {
+          success: false,
+          pendingApproval: true,
+          message: res.message,
+          data: (res as any).data
+        } as any;
+      }
       if (res.success && res.data) {
         api.setToken(res.data.token);
         if (res.data.refreshToken) api.setRefreshToken(res.data.refreshToken);
         api.setUserId(res.data.user.id);
         if (res.data.user.tenantId) api.setTenantId(res.data.user.tenantId);
+        if (res.data.workspace?.id) api.setWorkspaceId(res.data.workspace.id);
         setCurrentUser(res.data.user);
+        setActiveViewState('home');
         await loadInitialData();
         return { success: true };
       }
@@ -340,6 +361,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentWorkspace(null);
     setCurrentChannel(null);
     setCurrentConversation(null);
+    setActiveViewState('home');
+    setOrgNavContext({});
     setChannels([]);
     setConversations([]);
     setNotifications([]);
@@ -512,20 +535,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const switchTenant = async (tenantId: string) => {
     try {
-      await api.switchOrganization(tenantId);
-    } catch {}
-    api.setTenantId(tenantId);
-    const targetTenant = tenants.find(t => t.id === tenantId);
-    if (targetTenant) setCurrentTenant(targetTenant);
-    setCurrentChannel(null);
-    setCurrentConversation(null);
-    setActiveThreadParent(null);
-    setChannels([]);
-    setConversations([]);
-    if (currentUser) {
-      signalR.start(tenantId, currentUser.id);
+      // 1. Save navigation state of current organization before switching
+      if (currentTenant?.id) {
+        setOrgNavContext(prev => ({
+          ...prev,
+          [currentTenant.id]: {
+            activeView,
+            channelId: currentChannel?.id,
+            conversationId: currentConversation?.id
+          }
+        }));
+      }
+
+      // 2. Perform switch on backend
+      const res = await api.switchOrganization(tenantId);
+      if (res.success && res.data) {
+        api.setTenantId(tenantId);
+        if (res.data.workspace?.id) {
+          api.setWorkspaceId(res.data.workspace.id);
+        }
+        const targetTenant = tenants.find(t => t.id === tenantId) || res.data.organization;
+        if (targetTenant) setCurrentTenant(targetTenant);
+      } else {
+        api.setTenantId(tenantId);
+        const targetTenant = tenants.find(t => t.id === tenantId);
+        if (targetTenant) setCurrentTenant(targetTenant);
+      }
+
+      // 3. Restore navigation context if previously navigated in this organization, or default to 'home'
+      const savedContext = orgNavContext[tenantId];
+      if (savedContext && savedContext.activeView) {
+        setActiveViewState(savedContext.activeView);
+      } else {
+        setActiveViewState('home');
+      }
+
+      setCurrentChannel(null);
+      setCurrentConversation(null);
+      setActiveThreadParent(null);
+      setChannels([]);
+      setConversations([]);
+      if (currentUser) {
+        signalR.start(tenantId, currentUser.id);
+      }
+      await loadInitialData();
+    } catch (err: any) {
+      console.error('Error switching organization:', err);
+      addToast('No se pudo cambiar de organización', 'error');
     }
-    await loadInitialData();
   };
 
   const updateUserStatus = async (status: string, customStatus?: string) => {

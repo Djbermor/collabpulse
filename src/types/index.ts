@@ -62,6 +62,7 @@ export interface Organization {
   logoUrl?: string;
   primaryDomain?: string;
   status: 'Active' | 'Inactive' | 'Suspended' | 'ACTIVE' | 'INACTIVE';
+  isActive?: boolean;
   settings?: Record<string, any> | string;
   createdAt: string;
   updatedAt: string;

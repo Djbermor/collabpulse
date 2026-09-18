@@ -19,7 +19,8 @@ import {
   Bookmark,
   ChevronLeft,
   X,
-  Sparkles
+  Sparkles,
+  Home
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserStatus } from '../../types';
@@ -119,6 +120,22 @@ export const Sidebar: React.FC = () => {
 
       {/* Main Feature Navigation */}
       <div className="p-2 space-y-0.5 border-b border-slate-800/80">
+        <button
+          onClick={() => {
+            setActiveView('home');
+            setMobileSidebarOpen(false);
+          }}
+          className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center p-2' : 'gap-2.5 px-2.5 py-1.5'} rounded-lg font-medium transition-colors cursor-pointer ${
+            activeView === 'home'
+              ? 'bg-indigo-600/20 text-indigo-300 font-semibold border border-indigo-500/30'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+          }`}
+          title="Inicio"
+        >
+          <Home className="w-4 h-4 text-indigo-400 shrink-0" />
+          {!sidebarCollapsed && <span>Inicio</span>}
+        </button>
+
         {features.messaging !== false && (
           <button
             onClick={() => {

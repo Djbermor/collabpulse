@@ -43,6 +43,7 @@ export const Header: React.FC = () => {
     setMobileSidebarOpen,
     refreshNotifications,
     addToast,
+    setActiveView,
     logout
   } = useApp();
 
@@ -97,12 +98,16 @@ export const Header: React.FC = () => {
           <Menu className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-md shadow-indigo-500/20">
+        <div
+          onClick={() => setActiveView('home')}
+          className="flex items-center gap-2 cursor-pointer group"
+          title="Ir a Inicio"
+        >
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-md shadow-indigo-500/20 group-hover:scale-105 transition-transform">
             <Layers className="w-4 h-4 text-white" />
           </div>
           <div className="hidden sm:flex flex-col">
-            <span className="font-extrabold text-sm tracking-tight text-white flex items-center gap-1.5">
+            <span className="font-extrabold text-sm tracking-tight text-white flex items-center gap-1.5 group-hover:text-indigo-300 transition-colors">
               Nexora
               <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                 Enterprise
@@ -126,32 +131,39 @@ export const Header: React.FC = () => {
           </button>
 
           {showTenantDropdown && (
-            <div className="absolute left-0 mt-1.5 w-64 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-1.5 z-50 text-xs animate-in fade-in">
-              <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800/80">
-                Organizaciones (Multi-Tenant)
+            <div className="absolute left-0 mt-1.5 w-72 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-1.5 z-50 text-xs animate-in fade-in">
+              <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800/80 flex items-center justify-between">
+                <span>Organizaciones</span>
+                <span className="text-[10px] text-slate-500 lowercase">
+                  {tenants.filter(t => (t as any).status !== 'INACTIVE' && (t as any).status !== 'Inactive').length} activas
+                </span>
               </div>
-              {tenants.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    switchTenant(t.id);
-                    setShowTenantDropdown(false);
-                    addToast(`Cambiado a organización ${t.name}`, 'info');
-                  }}
-                  className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-slate-800/80 transition-colors ${
-                    currentTenant?.id === t.id ? 'text-indigo-400 font-semibold bg-indigo-950/30' : 'text-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-slate-400" />
-                    <div>
-                      <div className="font-medium text-slate-200">{t.name}</div>
-                      <div className="text-[10px] text-slate-400">{t.domain} • Plan {t.plan}</div>
-                    </div>
-                  </div>
-                  {currentTenant?.id === t.id && <Check className="w-3.5 h-3.5 text-indigo-400" />}
-                </button>
-              ))}
+              <div className="max-h-72 overflow-y-auto">
+                {tenants
+                  .filter(t => (t as any).status !== 'INACTIVE' && (t as any).status !== 'Inactive')
+                  .map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        switchTenant(t.id);
+                        setShowTenantDropdown(false);
+                        addToast(`Cambiado a organización ${t.name}`, 'info');
+                      }}
+                      className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-slate-800/80 transition-colors ${
+                        currentTenant?.id === t.id ? 'text-indigo-400 font-semibold bg-indigo-950/30' : 'text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                        <div className="truncate">
+                          <div className="font-medium text-slate-200 truncate">{t.name}</div>
+                          <div className="text-[10px] text-slate-400 truncate">{t.domain} • Plan {t.plan}</div>
+                        </div>
+                      </div>
+                      {currentTenant?.id === t.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                    </button>
+                  ))}
+              </div>
               <div className="pt-1 mt-1 border-t border-slate-800">
                 <button
                   onClick={() => {

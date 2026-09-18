@@ -250,6 +250,72 @@ messagesRouter.post('/', authenticate, requirePermission('messages.create'), asy
     clientMessageId
   } = req.body;
 
+  // REGLA CRÍTICA: Bloquear operaciones en organización inactiva
+  try {
+    const { pool } = await import('../../src/db/index.ts');
+    let org = db.organizations.find(o => o.id === tenantId);
+    const orgRes = await pool.query('SELECT status FROM organizations WHERE id = $1', [tenantId]);
+    if (orgRes.rows.length > 0) {
+      if (org) org.status = orgRes.rows[0].status;
+      if (orgRes.rows[0].status === 'INACTIVE' || orgRes.rows[0].status === 'Inactive') {
+        return res.status(400).json({
+          success: false,
+          message: 'No se pueden enviar mensajes en una organización inactiva',
+          code: 'ORGANIZATION_INACTIVE'
+        });
+      }
+    }
+  } catch {}
+
+  if (channelId) {
+    let ch = db.channels.find(c => c.id === channelId);
+    if (!ch) {
+      try {
+        const { pool } = await import('../../src/db/index.ts');
+        const chRes = await pool.query('SELECT * FROM channels WHERE id = $1', [channelId]);
+        if (chRes.rows.length > 0) {
+          const row = chRes.rows[0];
+          ch = {
+            id: row.id,
+            workspaceId: row.workspace_id,
+            tenantId: row.tenant_id,
+            name: row.name,
+            type: row.type || 'public',
+            isPrivate: row.type === 'private' || row.type === 'Private',
+            isArchived: row.is_archived || false,
+            createdBy: row.created_by,
+            createdAt: new Date(row.created_at).toISOString(),
+            updatedAt: new Date(row.updated_at).toISOString()
+          } as any;
+          db.channels.push(ch);
+        }
+      } catch {}
+    }
+
+    if (ch) {
+      try {
+        const { pool } = await import('../../src/db/index.ts');
+        const chOrgRes = await pool.query('SELECT status FROM organizations WHERE id = $1', [ch.tenantId]);
+        if (chOrgRes.rows.length > 0 && (chOrgRes.rows[0].status === 'INACTIVE' || chOrgRes.rows[0].status === 'Inactive')) {
+          return res.status(400).json({
+            success: false,
+            message: 'No se pueden enviar mensajes en una organización inactiva',
+            code: 'ORGANIZATION_INACTIVE'
+          });
+        }
+      } catch {}
+
+      const chOrg = db.organizations.find(o => o.id === ch.tenantId);
+      if (chOrg && (chOrg.status === 'INACTIVE' || chOrg.status === 'Inactive')) {
+        return res.status(400).json({
+          success: false,
+          message: 'No se pueden enviar mensajes en una organización inactiva',
+          code: 'ORGANIZATION_INACTIVE'
+        });
+      }
+    }
+  }
+
   // Idempotency check (Section 42)
   if (clientMessageId && processedClientMessageIds.has(clientMessageId)) {
     const existing = db.messages.find(m => m.id === processedClientMessageIds.get(clientMessageId)!.messageId);

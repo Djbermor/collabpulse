@@ -33,17 +33,26 @@ export const CreateGroupModal: React.FC = () => {
     let isMounted = true;
     setLoading(true);
 
-    api.getWorkspaceUsers()
-      .then(res => {
-        if (isMounted && res.success && res.data) {
-          const others = res.data.filter((u: User) => u.id !== currentUser?.id);
-          setUsers(others);
-        }
-      })
-      .catch(err => console.error('Error fetching users for group:', err))
-      .finally(() => {
-        if (isMounted) setLoading(false);
-      });
+    Promise.allSettled([
+      api.searchDirectory(),
+      api.getWorkspaceUsers()
+    ]).then(([dirRes, wsRes]) => {
+      if (!isMounted) return;
+      const map = new Map<string, any>();
+      if (dirRes.status === 'fulfilled' && dirRes.value.success && Array.isArray(dirRes.value.data)) {
+        dirRes.value.data.forEach((u: any) => map.set(u.id, u));
+      }
+      if (wsRes.status === 'fulfilled' && wsRes.value.success && Array.isArray(wsRes.value.data)) {
+        wsRes.value.data.forEach((u: any) => {
+          if (!map.has(u.id)) map.set(u.id, u);
+        });
+      }
+      const others = Array.from(map.values()).filter((u: any) => u.id !== currentUser?.id);
+      setUsers(others);
+    }).catch(err => console.error('Error fetching users for group:', err))
+    .finally(() => {
+      if (isMounted) setLoading(false);
+    });
 
     return () => {
       isMounted = false;

@@ -343,6 +343,66 @@ organizationsRouter.patch('/:id', authenticate, async (req: AuthenticatedRequest
 });
 
 /**
+ * DELETE /api/v1/organizations/:id
+ * Soft-delete (deactivate) an organization (Zero Hard Delete)
+ */
+organizationsRouter.delete('/:id', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.user!.id;
+  const orgId = req.params.id;
+
+  let org = db.organizations.find(o => o.id === orgId);
+  if (!org) {
+    try {
+      const orgRes = await pool.query('SELECT * FROM organizations WHERE id = $1', [orgId]);
+      if (orgRes.rows.length > 0) {
+        const row = orgRes.rows[0];
+        org = {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          type: row.type || 'Enterprise',
+          industry: row.industry || 'Technology',
+          status: row.status,
+          isActive: (row.status === 'Active' || row.status === 'ACTIVE'),
+          settings: row.settings || '{}',
+          createdAt: new Date(row.created_at).toISOString(),
+          updatedAt: new Date(row.updated_at).toISOString()
+        };
+        db.organizations.push(org);
+      }
+    } catch {}
+  }
+
+  if (!org) {
+    return res.status(404).json({ success: false, message: 'Organización no encontrada' });
+  }
+
+  org.status = 'INACTIVE';
+  org.isActive = false;
+  org.deactivatedAt = new Date().toISOString();
+  org.deactivatedBy = userId;
+  org.updatedAt = new Date().toISOString();
+
+  await db.persistOrganization(org);
+  try {
+    await pool.query("UPDATE organizations SET status = 'INACTIVE', is_active = false, updated_at = NOW() WHERE id = $1", [orgId]);
+  } catch {}
+
+  db.logAudit(
+    orgId,
+    userId,
+    req.user!.displayName || req.user!.email,
+    'ORGANIZATION_DEACTIVATED',
+    'Organization',
+    orgId,
+    req.ip,
+    { reason: 'Soft-deleted by admin' }
+  );
+
+  return res.json({ success: true, message: 'Organización desactivada exitosamente (Zero Hard Delete)', data: org });
+});
+
+/**
  * POST /api/v1/organizations/:id/domains
  * Add a domain to an organization
  */
@@ -417,14 +477,49 @@ organizationsRouter.post('/:id/switch', authenticate, async (req: AuthenticatedR
   const userId = req.user!.id;
   const targetOrgId = req.params.id;
 
-  const membership = db.organizationMembers.find(m => m.organizationId === targetOrgId && m.userId === userId);
-  if (!membership && req.user!.tenantId !== targetOrgId) {
-    return res.status(403).json({ success: false, message: 'No pertenece a esta organización' });
-  }
+  let org = db.organizations.find(o => o.id === targetOrgId);
+  try {
+    const orgRes = await pool.query('SELECT * FROM organizations WHERE id = $1', [targetOrgId]);
+    if (orgRes.rows.length > 0) {
+      const row = orgRes.rows[0];
+      if (org) {
+        org.status = row.status;
+        org.isActive = (row.status === 'Active' || row.status === 'ACTIVE');
+      } else {
+        org = {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          type: row.type || 'Enterprise',
+          industry: row.industry || 'Technology',
+          status: row.status,
+          isActive: (row.status === 'Active' || row.status === 'ACTIVE'),
+          settings: row.settings || '{}',
+          createdAt: new Date(row.created_at).toISOString(),
+          updatedAt: new Date(row.updated_at).toISOString()
+        };
+        db.organizations.push(org);
+      }
+    }
+  } catch {}
 
-  const org = db.organizations.find(o => o.id === targetOrgId);
   if (!org) {
     return res.status(404).json({ success: false, message: 'Organización no encontrada' });
+  }
+
+  // REGLA CRÍTICA: No se puede seleccionar una organización inactiva
+  if (org.status === 'INACTIVE' || org.status === 'Inactive') {
+    return res.status(400).json({
+      success: false,
+      message: 'No se puede seleccionar una organización inactiva',
+      code: 'ORGANIZATION_INACTIVE'
+    });
+  }
+
+  const isAdminOrOwner = req.user!.role === 'Admin' || req.user!.role === 'Owner';
+  const membership = db.organizationMembers.find(m => m.organizationId === targetOrgId && m.userId === userId);
+  if (!isAdminOrOwner && !membership && req.user!.tenantId !== targetOrgId) {
+    return res.status(403).json({ success: false, message: 'No pertenece a esta organización' });
   }
 
   // Update user's active tenantId in PostgreSQL and in-memory cache
@@ -435,7 +530,29 @@ organizationsRouter.post('/:id/switch', authenticate, async (req: AuthenticatedR
   }
 
   // Find default workspace for this organization
-  const ws = db.workspaces.find(w => w.tenantId === targetOrgId) || null;
+  let ws = db.workspaces.find(w => w.tenantId === targetOrgId) || null;
+  if (!ws) {
+    try {
+      const wsRes = await pool.query('SELECT * FROM workspaces WHERE tenant_id = $1 LIMIT 1', [targetOrgId]);
+      if (wsRes.rows.length > 0) {
+        const row = wsRes.rows[0];
+        ws = {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          tenantId: row.tenant_id,
+          status: row.status || 'Active',
+          timeZone: row.time_zone || 'UTC',
+          language: row.language || 'es',
+          createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+          updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString()
+        } as any;
+        db.workspaces.push(ws!);
+      }
+    } catch (e: any) {
+      console.warn('[Organizations] switch ws query error:', e.message);
+    }
+  }
 
   return res.json({
     success: true,
@@ -503,7 +620,32 @@ organizationsRouter.post('/:id/members', authenticate, async (req: Authenticated
     return res.status(400).json({ success: false, message: 'El parámetro userId es requerido' });
   }
 
-  const org = db.organizations.find(o => o.id === orgId);
+  let org = db.organizations.find(o => o.id === orgId);
+  try {
+    const orgRes = await pool.query('SELECT * FROM organizations WHERE id = $1', [orgId]);
+    if (orgRes.rows.length > 0) {
+      const row = orgRes.rows[0];
+      if (org) {
+        org.status = row.status;
+        org.isActive = (row.status === 'Active' || row.status === 'ACTIVE');
+      } else {
+        org = {
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          type: row.type || 'Enterprise',
+          industry: row.industry || 'Technology',
+          status: row.status,
+          isActive: (row.status === 'Active' || row.status === 'ACTIVE'),
+          settings: row.settings || '{}',
+          createdAt: new Date(row.created_at).toISOString(),
+          updatedAt: new Date(row.updated_at).toISOString()
+        };
+        db.organizations.push(org);
+      }
+    }
+  } catch {}
+
   if (!org) {
     return res.status(404).json({ success: false, message: 'Organización no encontrada' });
   }

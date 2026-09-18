@@ -33,6 +33,8 @@ import { pool } from '../../src/db/index';
 
 export const authRouter = Router();
 
+export const dbVerificationCodes = new Map<string, string>();
+
 // Helper to extract tenant
 export function getTenantId(req: any): string {
   return (req.headers['x-tenant-id'] as string) || (req.user?.tenantId) || db.tenants[0]?.id || '';
@@ -405,20 +407,33 @@ authRouter.post('/register', async (req, res) => {
   // Domain-based registration & Organization matching
   const emailDomain = (normalized.split('@')[1] || '').trim().toLowerCase();
   let matchedOrgId: string | null = tenantId || null;
-  let accountStatus: AccountStatus = 'Active';
 
   if (!matchedOrgId && emailDomain) {
     const matchedDomain = db.organizationDomains.find(d => d.domain.toLowerCase() === emailDomain && d.isVerified);
     if (matchedDomain) {
       matchedOrgId = matchedDomain.organizationId;
-      const orgSettings = db.organizationSettings.find(s => s.organizationId === matchedOrgId);
-      if (orgSettings?.requireApproval && !orgSettings?.allowAutoJoin) {
-        accountStatus = 'PendingVerification' as any;
-      }
     }
   }
 
   const targetTenantId = matchedOrgId || (db.organizations[0]?.id) || (db.tenants[0]?.id) || 'org-default';
+
+  // Check if corporate email domain
+  const isCorporateDomain = emailDomain === 'gestionsaludips.com' ||
+    db.organizationDomains.some(d => d.domain.toLowerCase() === emailDomain && d.isVerified);
+
+  let accountStatus: AccountStatus = 'Active';
+  let emailVerified = true;
+  let isActive = true;
+
+  if (isCorporateDomain) {
+    accountStatus = 'PendingVerification';
+    emailVerified = false;
+    isActive = false;
+  } else {
+    accountStatus = 'PENDING_ACTIVATION' as any;
+    emailVerified = false;
+    isActive = false;
+  }
 
   // Ensure tenant and organization exist in PostgreSQL and in-memory store to prevent FK violation
   const orgName = (req.body.tenantName as string) || (db.organizations.find(o => o.id === targetTenantId)?.name) || 'Organización';
@@ -494,11 +509,11 @@ authRouter.post('/register', async (req, res) => {
     timeZone: 'Europe/Madrid',
     status: 'Online',
     accountStatus,
-    emailVerified: true,
+    emailVerified,
     failedLoginAttempts: 0,
     lastLoginAt: new Date().toISOString(),
     lastSeenAt: new Date().toISOString(),
-    isActive: true,
+    isActive,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -512,7 +527,7 @@ authRouter.post('/register', async (req, res) => {
     organizationId: targetTenantId,
     userId: newUser.id,
     role: newUser.role,
-    status: accountStatus === 'PendingVerification' ? 'Pending' : 'Active',
+    status: isCorporateDomain ? 'Pending' : 'Pending',
     joinedAt: new Date().toISOString()
   };
   db.organizationMembers.push(orgMember as any);
@@ -541,75 +556,142 @@ authRouter.post('/register', async (req, res) => {
       });
   }
 
-  // Issue Session & Tokens
-  const rawRefreshToken = generateSecureToken(48);
-  const token = signJwt({
-    userId: newUser.id,
-    email: newUser.email,
-    tenantId: newUser.tenantId,
-    workspaceId: workspace?.id,
-    role: newUser.role
-  });
+  // Route depending on corporate vs non-corporate
+  if (isCorporateDomain) {
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    dbVerificationCodes.set(normalized, verificationCode);
+    const tokenId = `evt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    try {
+      await pool.query(
+        `INSERT INTO email_verification_tokens (id, user_id, email, token, token_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [tokenId, newUser.id, newUser.email, verificationCode, hashToken(verificationCode), expiresAt]
+      );
+    } catch (err: any) {
+      console.warn('[Auth] Error inserting email_verification_tokens:', err.message);
+    }
 
-  const userAgentStr = req.headers['user-agent'] || 'Nexora Browser / 1.0';
-  const deviceInfo = parseUserAgent(userAgentStr);
+    db.logAudit(
+      targetTenantId,
+      newUser.id,
+      newUser.displayName,
+      'USER_REGISTERED_PENDING_VERIFICATION',
+      'User',
+      newUser.id,
+      ip,
+      { email, corporateDomain: true }
+    );
 
-  const session: UserSession = {
-    id: `sess-${Date.now()}`,
-    userId: newUser.id,
-    tenantId: newUser.tenantId,
-    workspaceId: workspace?.id || '',
-    refreshTokenHash: hashToken(rawRefreshToken),
-    deviceName: `${deviceInfo.browser} en ${deviceInfo.os}`,
-    deviceType: deviceInfo.deviceType,
-    browser: deviceInfo.browser,
-    os: deviceInfo.os,
-    ipAddress: ip,
-    userAgent: userAgentStr,
-    createdAt: new Date().toISOString(),
-    lastUsedAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + 7 * 86400000).toISOString()
-  };
+    return res.status(201).json({
+      success: true,
+      requiresVerification: true,
+      email: newUser.email,
+      message: 'Se ha enviado un código de verificación de 6 dígitos a su correo electrónico corporativo.',
+      verificationCode
+    });
+  }
 
-  db.sessions.push(session);
-  await db.persistSession(session);
-
+  // Non-corporate registration
   db.logAudit(
     targetTenantId,
     newUser.id,
     newUser.displayName,
-    'USER_CREATED',
+    'USER_REGISTERED_PENDING_ACTIVATION',
     'User',
     newUser.id,
     ip,
-    { email, role: newUser.role, workspaceId: workspace?.id }
+    { email, corporateDomain: false }
   );
 
-  res.status(201).json({
+  return res.status(201).json({
     success: true,
+    pendingApproval: true,
+    message: 'Su cuenta ha sido registrada con correo externo y se encuentra en estado pendiente de activación por un administrador de la organización.',
     data: {
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-        userName: newUser.userName,
-        firstName: newUser.firstName,
-        lastName: newUser.lastName,
-        displayName: newUser.displayName,
-        role: newUser.role,
-        tenantId: newUser.tenantId,
-        avatarUrl: newUser.avatarUrl,
-        jobTitle: newUser.jobTitle,
-        timeZone: newUser.timeZone,
-        status: newUser.status,
-        accountStatus: newUser.accountStatus,
-        emailVerified: newUser.emailVerified
-      },
-      token,
-      refreshToken: rawRefreshToken,
-      sessionId: session.id,
-      workspace: workspace || null,
-      permissions: ROLE_PERMISSIONS[newUser.role] || []
+      accountStatus: 'PENDING_ACTIVATION',
+      email: newUser.email
     }
+  });
+});
+
+/**
+ * POST /api/v1/auth/verify-email
+ * POST /api/auth/verify-email
+ * Verify corporate 6-digit verification code and activate account
+ */
+authRouter.post(['/verify-email', '/api/v1/auth/verify-email'], async (req, res) => {
+  const { email, code, token } = req.body;
+  const verificationCode = (code || token || '').toString().trim();
+  const cleanEmail = normalizeEmail(email || '');
+
+  if (!cleanEmail || !verificationCode) {
+    return res.status(400).json({
+      success: false,
+      message: 'Correo y código de verificación son requeridos',
+      code: 'MISSING_FIELDS'
+    });
+  }
+
+  let validToken = false;
+  try {
+    const tokenRes = await pool.query(
+      `SELECT * FROM email_verification_tokens 
+       WHERE lower(email) = $1 AND token = $2 AND used_at IS NULL AND expires_at > NOW() 
+       LIMIT 1`,
+      [cleanEmail, verificationCode]
+    );
+    if (tokenRes.rows.length > 0) {
+      validToken = true;
+      await pool.query(
+        `UPDATE email_verification_tokens SET used_at = NOW() WHERE id = $1`,
+        [tokenRes.rows[0].id]
+      );
+    }
+  } catch (err: any) {
+    console.warn('[Auth] verify-email token DB error:', err.message);
+  }
+
+  if (!validToken && dbVerificationCodes.get(cleanEmail) === verificationCode) {
+    validToken = true;
+    dbVerificationCodes.delete(cleanEmail);
+  }
+
+  if (!validToken) {
+    return res.status(400).json({
+      success: false,
+      message: 'Código de verificación inválido o expirado',
+      code: 'INVALID_VERIFICATION_CODE'
+    });
+  }
+
+  try {
+    await pool.query(
+      `UPDATE users SET account_status = 'Active', email_verified = true, is_active = true, updated_at = NOW()
+       WHERE normalized_email = $1 OR lower(email) = $1`,
+      [cleanEmail]
+    );
+  } catch (err: any) {
+    console.warn('[Auth] verify-email user update error:', err.message);
+  }
+
+  const user = db.users.find(u => u.normalizedEmail === cleanEmail || u.email?.toLowerCase() === cleanEmail);
+  if (user) {
+    user.accountStatus = 'Active';
+    user.emailVerified = true;
+    user.isActive = true;
+
+    const member = db.organizationMembers.find(m => m.userId === user.id);
+    if (member) member.status = 'Active';
+    try {
+      await pool.query(`UPDATE organization_members SET status = 'Active' WHERE user_id = $1`, [user.id]);
+    } catch {}
+  }
+
+  return res.json({
+    success: true,
+    message: 'Correo corporativo verificado exitosamente. Ya puede iniciar sesión.',
+    code: 'EMAIL_VERIFIED'
   });
 });
 
@@ -728,7 +810,7 @@ authRouter.post('/firebase-login', async (req, res) => {
       userAgent: req.headers['user-agent'] || 'Firebase Auth',
       createdAt: new Date().toISOString(),
       lastUsedAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 7 * 86400000).toISOString()
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_LIFETIME_SECONDS * 1000).toISOString()
     };
     db.sessions.push(session);
 
@@ -804,7 +886,8 @@ authRouter.post(['/refresh-token', '/refresh'], async (req, res) => {
   }
 
   const user = db.users.find(u => u.id === session.userId);
-  if (!user || user.accountStatus !== 'Active') {
+  const isUserActive = user && (user.accountStatus === 'Active' || (user.accountStatus as string)?.toUpperCase() === 'ACTIVE') && user.isActive !== false;
+  if (!user || !isUserActive) {
     return res.status(403).json({
       success: false,
       message: 'Cuenta inactiva o no encontrada',
@@ -817,8 +900,12 @@ authRouter.post(['/refresh-token', '/refresh'], async (req, res) => {
   const oldHashed = session.refreshTokenHash;
   session.refreshTokenHash = hashToken(newRawRefreshToken);
   session.lastUsedAt = new Date().toISOString();
+  session.expiresAt = new Date(Date.now() + REFRESH_TOKEN_LIFETIME_SECONDS * 1000).toISOString();
 
-  await db.updatePgSession(session.id, { refreshTokenHash: session.refreshTokenHash });
+  await db.updatePgSession(session.id, {
+    refreshTokenHash: session.refreshTokenHash,
+    expiresAt: session.expiresAt
+  });
 
   const newAccessToken = signJwt({
     userId: user.id,
